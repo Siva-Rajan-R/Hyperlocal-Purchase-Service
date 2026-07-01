@@ -1,0 +1,2 @@
+ENV_PREFIX="INVENTORY_"
+SERVICE_NAME='purchase'
