@@ -94,6 +94,8 @@ class CreatePurchaseSchema(BaseModel):
     items:List[CreatePurchaseItemsSchema]
     invoice_no:str
 
+    custom_fields:Optional[dict]={}
+
 
 
 class UpdatePurchaseSchema(BaseModel):
@@ -105,6 +107,7 @@ class UpdatePurchaseSchema(BaseModel):
     payment_infos:Optional[List[PurchasePaymentInfos]]=None
     purchase_date:Optional[date]=None
     items:Optional[List[UpdatePurchaseItemsSchema]]=None
+    custom_fields:Optional[dict]={}
 
 
 

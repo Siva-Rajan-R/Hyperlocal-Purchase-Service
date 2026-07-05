@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from api.routers.v1 import purchase_route
+from api.routers.v1 import purchase_route,customfield_router
 from contextlib import asynccontextmanager
 from icecream import ic
 from dotenv import load_dotenv
@@ -56,8 +56,5 @@ app=FastAPI(
 
 
 # Routes to include
-
 app.include_router(purchase_route.router)
-
-
-
+app.include_router(customfield_router.router)

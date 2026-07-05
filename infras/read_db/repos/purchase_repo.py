@@ -1,6 +1,8 @@
 from ..main import PURCHAESE_COLLECTION, PURCHASE_STATS_COLLECTION
 from ..models.purchase_model import PurchaseReadModel
 from icecream import ic
+from typing import List,Optional
+from schemas.v1.purchase_schemas.request_schema import GetAllPurchaseSchemas,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema
 
 
 
@@ -31,6 +33,50 @@ class PurchaseReadDbRepo:
                 asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(purchase.shop_id, purchase.supplier.supplier_id))
         ic(result)
         return result
+    
+
+    @staticmethod
+    async def get_all(
+        data:GetAllPurchaseSchemas
+    ) -> List[dict]:
+        query = {}
+
+        cursor = PURCHAESE_COLLECTION.find(
+            query,
+            {"_id": 0}
+        )
+
+        return await cursor.to_list(length=None)
+
+    @staticmethod
+    async def get_by_shop_id(
+        data:GetPurchaseByShopIdSchema
+    ) -> List[dict]:
+        query = {
+            "shop_id": data.shop_id
+        }
+
+        cursor = PURCHAESE_COLLECTION.find(
+            query,
+            {"_id": 0}
+        )
+
+        return await cursor.to_list(length=None)
+
+    @staticmethod
+    async def get_by_id(
+        data:GetPurchaseByIdSchema
+    ) -> Optional[dict]:
+        query = {
+            "shop_id": data.shop_id,
+            "purchase_id": data.id,
+        }
+
+
+        return await PURCHAESE_COLLECTION.find_one(
+            query,
+            {"_id": 0}
+        )
     
     # @staticmethod
     # async def get_all_purchases(data:GetPurchaseByShopIdSchema):

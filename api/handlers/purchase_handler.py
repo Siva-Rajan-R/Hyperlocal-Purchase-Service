@@ -13,6 +13,11 @@ from messaging.saga_producer import SagaProducer,CreateSagaStateSchema,SagaStatu
 from hyperlocal_platform.core.enums.saga_state_enum import SagaStepsValueEnum
 from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
 from hyperlocal_platform.core.utils.routingkey_builder import generate_routingkey,RoutingkeyState,RoutingkeyActions,RoutingkeyVersions
+from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo
+from infras.primary_db.services.customfield_service import CustomFieldsService
+from core.utils.validate_custom_fields import validate_and_filter_custom_fields
+from schemas.v1.request_schemas.customfield_schema import BulkCreateCustomFieldValuesSchema
+
 
 class HandlePurchaseRequest:
     def __init__(self,session:AsyncSession):
@@ -84,8 +89,25 @@ class HandlePurchaseRequest:
                     )
                 product_serial_numbers[product_id].add(sn)
         
-        res=await self.purchase_service_obj.create(data=data)
+        cust_field_obj = CustomFieldsService(session=self.session)
+        fields = await cust_field_obj.get_all_fields(shop_id=data.shop_id)
+        valid_custom_fields = validate_and_filter_custom_fields(data.custom_fields, fields)
+        
+        defined_fields_map = {f['field_name']: f['id'] for f in fields}
+        cf_values = []
+        for key, val in valid_custom_fields.items():
+            if key in defined_fields_map:
+                cf_values.append({"field_id": defined_fields_map[key], "value": str(val), "field_name": key})
+                
+        # Send formatted values under a special key or just replace the dict. 
+        # But wait, pydantic requires it to be a dict if we reassign data.custom_fields.
+        # We can store the raw valid fields and let the msgqueue producer handle it,
+        # OR we can just pass the formatted list in a dummy dict like {"values": cf_values}
+        data.custom_fields = {"values": cf_values} if cf_values else {}
+        
+        res = await self.purchase_service_obj.create(data=data)
         ic(res)
+
 
         return SuccessResponseTypDict(
             detail=BaseResponseTypDict(
@@ -97,16 +119,34 @@ class HandlePurchaseRequest:
     
 
     async def update(self,data:UpdatePurchaseSchema,user_id:str):
-        res=await self.purchase_service_obj.update(data=data)
+        cust_field_obj = CustomFieldsService(session=self.session)
+        fields = await cust_field_obj.get_all_fields(shop_id=data.shop_id)
+        valid_custom_fields = validate_and_filter_custom_fields(data.custom_fields, fields)
+        
+        final_data = UpdatePurchaseSchema(**data.model_dump(exclude=['custom_fields']))
+        res = await self.purchase_service_obj.update(data=final_data)
 
         if res:
-            return SuccessResponseTypDict(
-                detail=BaseResponseTypDict(
-                    msg="Purchase updated successfully",
-                    status_code=200,
-                    success=True
-                )
-            )
+             defined_fields_map = {f['field_name']: f['id'] for f in fields}
+             cf_values = []
+             for key, val in valid_custom_fields.items():
+                 if key in defined_fields_map:
+                     cf_values.append({"field_id": defined_fields_map[key], "value": str(val), "field_name": key})
+             
+             if cf_values:
+                 bulk_data = BulkCreateCustomFieldValuesSchema(
+                     purchase_id=data.id,
+                     values=cf_values
+                 )
+                 await cust_field_obj.bulk_upsert_values(shop_id=data.shop_id, data=bulk_data)
+
+             return SuccessResponseTypDict(
+                 detail=BaseResponseTypDict(
+                     msg="Purchase updated successfully",
+                     status_code=200,
+                     success=True
+                 )
+             )
         
         raise HTTPException(
             status_code=400,
@@ -143,7 +183,8 @@ class HandlePurchaseRequest:
     
 
     async def get_purchases(self,data:GetAllPurchaseSchemas):
-        res=await self.purchase_service_obj.get_purchases(data=data)
+        # res=await self.purchase_service_obj.get_purchases(data=data)
+        res=await PurchaseReadDbRepo.get_all(data=data)
         ic(res)
         return SuccessResponseTypDict(
             detail=BaseResponseTypDict(
@@ -155,7 +196,8 @@ class HandlePurchaseRequest:
         )
     
     async def get_purchases_by_shop_id(self,data:GetPurchaseByShopIdSchema):
-        res=await self.purchase_service_obj.get_purchase_by_shop_id(data=data)
+        # res=await self.purchase_service_obj.get_purchase_by_shop_id(data=data)
+        res=await PurchaseReadDbRepo.get_by_shop_id(data=data)
         ic(res)
         return SuccessResponseTypDict(
             detail=BaseResponseTypDict(
@@ -166,7 +208,8 @@ class HandlePurchaseRequest:
             data=res
         )
     async def get_purchase_by_id(self,data:GetPurchaseByIdSchema):
-        res=await self.purchase_service_obj.get_purchase_by_id(data=data)
+        # res=await self.purchase_service_obj.get_purchase_by_id(data=data)
+        res=await PurchaseReadDbRepo.get_by_id(data=data)
         ic(res)
         return SuccessResponseTypDict(
             detail=BaseResponseTypDict(

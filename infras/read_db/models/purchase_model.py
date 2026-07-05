@@ -32,9 +32,8 @@ class PurchaseItemReadModel(BaseModel):
     product_id: str
     ui_id: str
     name: str
-    
-    category_name: Optional[str] = None
-    unit_name: Optional[str] = None
+    category_infos: Optional[dict] = None
+    unit_infos: Optional[dict] = None
     
     variant_infos: Optional[ReadVariantInfos] = None
     batch_infos: Optional[ReadBatchInfos] = None
@@ -71,13 +70,14 @@ class PurchaseReadModel(BaseModel):
     total_items: int = 0
     total_quantity: int = 0
 
-    paid_amount: float = 0.0
+    payment_infos: list = []
     payment_status: str = "completed"
-    transport_charge: float = 0.0
-    other_charges: float = 0.0
+    outstanding_amount : float = 0.0 
+    charges_infos: dict = {}
     calculations: dict = {}
+    gst_infos: dict = {}
     payment_status:str
-
+    custom_fields: Optional[dict] = {}
     items: List[PurchaseItemReadModel] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
