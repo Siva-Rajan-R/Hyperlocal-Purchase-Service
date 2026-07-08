@@ -16,3 +16,17 @@ class CreateCustomFieldValueDbSchema(BaseModel):
     purchase_id: str
     field_id: str
     value: str
+
+
+class UpdateCustomFieldDbSchema(BaseModel):
+    id:str
+    shop_id:str
+    label_name: Optional[str]=None
+    type: Optional[str]=None
+    required: Optional[bool] = False
+    visible_online: Optional[bool] = False
+
+class DeleteCustomFieldDbSchema(BaseModel):
+    id:str
+    shop_id:str
+

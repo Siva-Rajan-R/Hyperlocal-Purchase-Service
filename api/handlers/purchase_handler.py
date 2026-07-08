@@ -14,7 +14,7 @@ from hyperlocal_platform.core.enums.saga_state_enum import SagaStepsValueEnum
 from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
 from hyperlocal_platform.core.utils.routingkey_builder import generate_routingkey,RoutingkeyState,RoutingkeyActions,RoutingkeyVersions
 from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo
-from infras.primary_db.services.customfield_service import CustomFieldsService
+from infras.primary_db.services.customfield_service import CustomFieldsService,GetFieldById,GetFieldByName,GetvaluesByCustomerId,GetFieldByShopIdSchema
 from core.utils.validate_custom_fields import validate_and_filter_custom_fields
 from schemas.v1.request_schemas.customfield_schema import BulkCreateCustomFieldValuesSchema
 
@@ -89,21 +89,12 @@ class HandlePurchaseRequest:
                     )
                 product_serial_numbers[product_id].add(sn)
         
-        cust_field_obj = CustomFieldsService(session=self.session)
-        fields = await cust_field_obj.get_all_fields(shop_id=data.shop_id)
-        valid_custom_fields = validate_and_filter_custom_fields(data.custom_fields, fields)
-        
-        defined_fields_map = {f['field_name']: f['id'] for f in fields}
-        cf_values = []
-        for key, val in valid_custom_fields.items():
-            if key in defined_fields_map:
-                cf_values.append({"field_id": defined_fields_map[key], "value": str(val), "field_name": key})
-                
-        # Send formatted values under a special key or just replace the dict. 
-        # But wait, pydantic requires it to be a dict if we reassign data.custom_fields.
-        # We can store the raw valid fields and let the msgqueue producer handle it,
-        # OR we can just pass the formatted list in a dummy dict like {"values": cf_values}
-        data.custom_fields = {"values": cf_values} if cf_values else {}
+        # for checking the custome fields
+        defined_fields = await CustomFieldsService(session=self.session).get_field_by_shop_id(data=GetFieldByShopIdSchema(shop_id=data.shop_id))
+        valid_custom_fields = validate_and_filter_custom_fields(payload_custom_fields=data.custom_fields, defined_custom_fields=defined_fields)
+        ic(valid_custom_fields)
+
+        data_toadd=CreatePurchaseSchema(custom_fields=valid_custom_fields,**data.model_dump(exclude=['custom_fields']))
         
         res = await self.purchase_service_obj.create(data=data)
         ic(res)

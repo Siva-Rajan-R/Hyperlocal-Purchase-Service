@@ -1,5 +1,6 @@
 from typing import List, Dict
 from fastapi import HTTPException
+from icecream import ic
 from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
 
 def validate_and_filter_custom_fields(payload_custom_fields: Dict, defined_custom_fields: List[Dict]) -> Dict:
@@ -14,6 +15,7 @@ def validate_and_filter_custom_fields(payload_custom_fields: Dict, defined_custo
 
     defined_fields_map = {field['field_name']: field for field in defined_custom_fields}
     payload_custom_fields = payload_custom_fields or {}
+    ic(defined_fields_map,payload_custom_fields)
 
     # Check for required fields
     for field_name, field_def in defined_fields_map.items():
@@ -30,8 +32,9 @@ def validate_and_filter_custom_fields(payload_custom_fields: Dict, defined_custo
 
     # Filter out unknown fields and build valid custom fields
     valid_custom_fields = {}
+    
     for key, value in payload_custom_fields.items():
         if key in defined_fields_map:
-            valid_custom_fields[key] = value
-
+            valid_custom_fields[defined_fields_map[key]['id']] = value
+    ic(valid_custom_fields)
     return valid_custom_fields

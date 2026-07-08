@@ -12,7 +12,7 @@ from integrations.utility_service import get_ui_id, get_shop_category, get_shop_
 from typing import Optional, List, Dict, Any
 import datetime
 from infras.primary_db.services.customfield_service import CustomFieldsService
-from schemas.v1.request_schemas.customfield_schema import CreateCustomFieldSchema,CreateCustomFieldValueSchema,BulkCreateCustomFieldValuesSchema,UpdateCustomFieldSchema,UpdateCustomFieldValueSchema
+from schemas.v1.request_schemas.customfield_schema import CreateCustomFieldSchema,CreateCustomFieldValueSchema,BulkCreateCustomFieldValuesSchema,UpdateCustomFieldSchema,UpdateCustomFieldValueSchema,GetFieldByShopIdSchema,GetFieldById,GetFieldByName,GetValueByIdName,GetvaluesByCustomerId
 
 
 
@@ -398,15 +398,17 @@ class MessagingQueuePurchasegproducer:
                 if pur_stl_toadd:
                     await repo.create_bulk_stl(data=pur_stl_toadd)
 
-                if purchase_data.get("custom_fields") and purchase_data.get("custom_fields").get("values"):
-                    await CustomFieldsService(session=session).bulk_upsert_values(
+                cust_obj=await CustomFieldsService(session=session).upsert_values(
+                data=CreateCustomFieldValueSchema(
                         shop_id=shop_id,
-                        data=BulkCreateCustomFieldValuesSchema(
-                            purchase_id=purchase_id,
-                            values=purchase_data.get("custom_fields").get("values")
-
-                        )
+                        purchase_id=purchase_id,
+                        value_infos=[
+                            {'field_id':id,"value":value}
+                            for id,value in purchase_data.get("custom_fields").items()
+                        ]
                     )
+                )
+                ic(cust_obj)
 
                 total_amount_paid = sum(float(payment.get('amount', 0)) for payment in payment_infos)
                 total_pur_cost = float(item_infos['total_pur_cost'] + item_infos['total_gst_amount'])
@@ -469,6 +471,40 @@ class MessagingQueuePurchasegproducer:
                             "service_name": "SUPPLIERS"
                         }
                     )
+                
+                try:
+                    analytics_payload = {
+                        "shop_id": shop_id,
+                        "datas": [
+                            {
+                                "purchase_id": purchase_id,
+                                "supplier_id": supplier_id,
+                                "product_id": item.product_id,
+                                "variant_id": item.variant_infos.id if item.variant_infos else None,
+                                "batch_id": item.batch_infos.id if item.batch_infos else None,
+                                "stocks": float(item.stocks_infos.stocks) if item.stocks_infos else 0.0,
+                                "purchase_amounts": float(item.total_amount) if item.total_amount else 0.0,
+                                "outstanding_amounts": outstanding_amount if i == 0 else 0
+                            }
+                            for i, item in enumerate(read_items)
+                        ]
+                    }
+                    await rabbitmq_msg_obj.publish_event(
+                        routing_key="analytics.service.routing.key",
+                        exchange_name="analytics.service.exchange",
+                        payload=analytics_payload,
+                        headers={
+                            "entity_name": "purchase_event",
+                            "service_name": "ANALYTICS",
+                            "saga_id": "none",
+                            "reply_key": "none",
+                            "reply_exchange": "none",
+                            "reply_entity_name": "none",
+                            "body": analytics_payload
+                        }
+                    )
+                except Exception as e:
+                    ic(f"Failed to publish analytics event: {e}")
 
             return {
                 "success": True,

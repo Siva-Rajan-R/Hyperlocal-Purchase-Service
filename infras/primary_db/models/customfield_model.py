@@ -1,5 +1,5 @@
 from ..main import BASE
-from sqlalchemy import Column,String,ForeignKey,Integer,TIMESTAMP,func,Float,BigInteger,Identity,Boolean,ARRAY,Date
+from sqlalchemy import Column,String,ForeignKey,Integer,TIMESTAMP,func,Float,BigInteger,Identity,Boolean,ARRAY,Date,UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -29,5 +29,10 @@ class PurchaseCustomFieldsValues(BASE):
 
     created_at=Column(TIMESTAMP(timezone=True),nullable=False,server_default=func.now())
     updated_at=Column(TIMESTAMP(timezone=True),nullable=False,server_default=func.now(),onupdate=func.now())
+
+    __table_args__ = (
+        # This tells Postgres exactly where to check for conflicts during the upsert
+        UniqueConstraint("purchase_id", "field_id", name="uq_purchase_field_value"),
+    )
 
     

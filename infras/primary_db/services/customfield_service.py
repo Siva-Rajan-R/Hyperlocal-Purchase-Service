@@ -4,104 +4,102 @@ from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
 from schemas.v1.request_schemas.customfield_schema import (
     CreateCustomFieldSchema, UpdateCustomFieldSchema,
     CreateCustomFieldValueSchema, UpdateCustomFieldValueSchema,
-    BulkCreateCustomFieldValuesSchema
+    BulkCreateCustomFieldValuesSchema,DeleteCustomFieldSchema,GetFieldById,GetFieldByName,GetFieldByShopIdSchema,GetValueByIdName,GetvaluesByCustomerId
 )
-from schemas.v1.db_schemas.customfield_schema import CreateCustomFieldDbSchema, CreateCustomFieldValueDbSchema
+from schemas.v1.db_schemas.customfield_schema import CreateCustomFieldDbSchema, CreateCustomFieldValueDbSchema,DeleteCustomFieldDbSchema,UpdateCustomFieldDbSchema
 from ..repos.customfield_repo import CustomFieldsRepo
+from typing import List
 
 class CustomFieldsService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repo = CustomFieldsRepo(session)
 
-    async def create_field(self, shop_id: str, data: CreateCustomFieldSchema) -> dict:
-        existing = await self.repo.get_field_by_name(field_name=data.field_name, shop_id=shop_id)
-        if existing:
-            raise HTTPException(status_code=400, detail="Custom field with this name already exists")
+    async def create_bulk_field(self, data: CreateCustomFieldSchema) -> dict:
+        data_toadd=[]
+        names=[]
+        shop_id=data.shop_id
+        for field_data in data.field_infos:
+            field_id = generate_uuid()
+            data_toadd.append(
+                    CreateCustomFieldDbSchema(
+                    id=field_id,
+                    shop_id=shop_id,
+                    **field_data.model_dump()
+                )
+            )
 
-        field_id = generate_uuid()
-        db_data = CreateCustomFieldDbSchema(
-            id=field_id,
-            shop_id=shop_id,
-            **data.model_dump()
-        )
+            names.append(field_data.field_name)
         
-        await self.repo.create_field(db_data)
-        return {"success": True, "id": field_id}
+        existing=await self.repo.get_bulk_fields(names=names,shop_id=shop_id)
+        if len(existing)>0:
+            raise HTTPException(status_code=400, detail="Custom field with this name already exists")
+        
+        await self.repo.create_all_field(data=data_toadd)
+        return {"success": True}
+    
 
-    async def update_field(self, field_id: str, shop_id: str, data: UpdateCustomFieldSchema) -> dict:
-        existing = await self.repo.get_field_by_id(field_id=field_id, shop_id=shop_id)
+
+    async def update_field(self, data: UpdateCustomFieldSchema) -> dict:
+        existing = await self.repo.get_field_by_id(field_id=data.field_id, shop_id=data.shop_id)
         if not existing:
             raise HTTPException(status_code=404, detail="Custom field not found")
 
-        update_data = data.model_dump(exclude_unset=True)
+        update_data = data.model_dump(exclude_unset=True,exclude_none=True,exclude=['field_id','shop_id'])
         if not update_data:
             return {"success": True, "message": "No fields to update"}
             
-        updated_id = await self.repo.update_field(field_id=field_id, shop_id=shop_id, update_data=update_data)
+        updated_id = await self.repo.update_field(data=UpdateCustomFieldDbSchema(**data.model_dump()))
         if not updated_id:
             raise HTTPException(status_code=500, detail="Failed to update custom field")
             
-        return {"success": True, "id": updated_id}
+        return {"success": True}
 
-    async def delete_field(self, field_id: str, shop_id: str) -> dict:
-        existing = await self.repo.get_field_by_id(field_id=field_id, shop_id=shop_id)
-        if not existing:
-            raise HTTPException(status_code=404, detail="Custom field not found")
+    async def delete_field(self,data:DeleteCustomFieldSchema) -> dict:
+        value_exists=await self.repo.get_values_by_id(id=data.id,shop_id=data.shop_id)
+
+        if value_exists:
+            raise HTTPException(status_code=404, detail="This field have a value u cant be able to delete")
             
-        success = await self.repo.delete_field(field_id=field_id, shop_id=shop_id)
+        success = await self.repo.delete_field(field_id=data.field_id, shop_id=data.shop_id)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to delete custom field")
             
         return {"success": True}
 
-    async def get_all_fields(self, shop_id: str) -> list:
-        return await self.repo.get_all_fields(shop_id=shop_id)
 
-    async def get_field(self, field_id: str, shop_id: str) -> dict:
-        field = await self.repo.get_field_by_id(field_id=field_id, shop_id=shop_id)
+    async def get_all_fields(self) -> list:
+        return await self.repo.get_fields()
+
+    async def get_field_by_shop_id(self,data:GetFieldByShopIdSchema) -> dict:
+        field = await self.repo.get_fields_by_shop_id(data=data)
         if not field:
-            raise HTTPException(status_code=404, detail="Custom field not found")
+            return {}
+        return field
+    
+    async def get_field_by_id(self,data:GetFieldById):
+        field = await self.repo.get_field_by_id(data=data)
+        if not field:
+            return {}
         return field
 
     # --- Values ---
 
-    async def upsert_value(self, shop_id: str, data: CreateCustomFieldValueSchema) -> dict:
-        field = await self.repo.get_field_by_id(field_id=data.field_id, shop_id=shop_id)
-        if not field:
-            raise HTTPException(status_code=404, detail=f"Custom field {data.field_id} not found")
-            
-        value_id = generate_uuid()
-        db_data = CreateCustomFieldValueDbSchema(
-            id=value_id,
-            shop_id=shop_id,
-            **data.model_dump()
-        )
-        
-        await self.repo.upsert_field_value(db_data)
-        return {"success": True}
-
-    async def bulk_upsert_values(self, shop_id: str, data: BulkCreateCustomFieldValuesSchema) -> dict:
-        for val in data.values:
-            field_id = val.get("field_id")
-            value = val.get("value")
-            if not field_id or not value:
-                continue
-                
-            field = await self.repo.get_field_by_id(field_id=field_id, shop_id=shop_id)
-            if not field:
-                raise HTTPException(status_code=404, detail=f"Custom field {field_id} not found")
-                
-            db_data = CreateCustomFieldValueDbSchema(
-                id=generate_uuid(),
+    async def upsert_values(self, data: CreateCustomFieldValueSchema) -> dict: 
+        data_toadd=[]  
+        shop_id=data.shop_id
+        purchase_id=data.purchase_id
+        for d in data.value_infos:
+            value_id = generate_uuid()
+            data_toadd.append(CreateCustomFieldValueDbSchema(
+                id=value_id,
                 shop_id=shop_id,
-                purchase_id=data.purchase_id,
-                field_id=field_id,
-                value=value
-            )
-            await self.repo.upsert_field_value(db_data)
-            
+                purchase_id=purchase_id,
+                **d.model_dump()
+            ))
+        
+        await self.repo.upsert_field_value(data=data_toadd)
         return {"success": True}
 
-    async def get_values_by_purchase(self, purchase_id: str, shop_id: str) -> list:
-        return await self.repo.get_values_by_purchase_id(purchase_id=purchase_id, shop_id=shop_id)
+    async def get_values_by_purchase(self,data:GetvaluesByCustomerId) -> list:
+        return await self.repo.get_values_by_purchase_id(data=data)
