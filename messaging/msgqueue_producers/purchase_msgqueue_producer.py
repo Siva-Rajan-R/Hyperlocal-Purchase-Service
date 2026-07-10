@@ -337,7 +337,7 @@ class MessagingQueuePurchasegproducer:
                             ))
 
                         variant_infos_model = ReadVariantInfos(id=variant_id, name=variant_name) if variant_id else None
-                        batch_infos_model = ReadBatchInfos(id=batch_infos.get('id', batch_id), name=batch_infos.get('name', ''),mfg_date=batch_infos.get('manufacturing_date'),exp_date=batch_infos.get('expiry_date')) if (batch_id or batch_infos_payload.get('name')) else None
+                        batch_infos_model = ReadBatchInfos(id=batch_infos.get('id') or batch_id or generate_uuid(), name=batch_infos.get('name', ''),mfg_date=batch_infos.get('manufacturing_date'),exp_date=batch_infos.get('expiry_date')) if (batch_id or batch_infos_payload.get('name')) else None
                         stock_infos_model = ReadStocksInfos(stocks=stocks, stocks_before=stock_before, stocks_after=stock_after)
                         
                         reorder_point_model = ReadReorderPointInfos(
