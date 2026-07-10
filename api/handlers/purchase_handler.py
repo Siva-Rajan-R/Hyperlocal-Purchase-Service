@@ -8,7 +8,7 @@ from icecream import ic
 from fastapi.exceptions import HTTPException
 from core.utils.validate_fields import convert_field_type,validate_fields
 from infras.caching.models.purchase_model import PurchaseProductCacheModel,PurchaseProductCachingSchema,PurchaseSupplierCacheModel,PurchaseSupplierCachingSchema
-from schemas.v1.purchase_schemas.request_schema import CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas
+from schemas.v1.purchase_schemas.request_schema import CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema
 from messaging.saga_producer import SagaProducer,CreateSagaStateSchema,SagaStatusEnum,SagaStateExecutionTypDict
 from hyperlocal_platform.core.enums.saga_state_enum import SagaStepsValueEnum
 from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
@@ -201,6 +201,30 @@ class HandlePurchaseRequest:
     async def get_purchase_by_id(self,data:GetPurchaseByIdSchema):
         # res=await self.purchase_service_obj.get_purchase_by_id(data=data)
         res=await PurchaseReadDbRepo.get_by_id(data=data)
+        ic(res)
+        return SuccessResponseTypDict(
+            detail=BaseResponseTypDict(
+                status_code=200,
+                success=True,
+                msg="Purchase fetched successfully"
+            ),
+            data=res
+        )
+
+    async def get_purchases_by_product_id(self,data:GetPurchaseByProductIdSchema):
+        res=await PurchaseReadDbRepo.get_by_product_id(data=data)
+        ic(res)
+        return SuccessResponseTypDict(
+            detail=BaseResponseTypDict(
+                status_code=200,
+                success=True,
+                msg="Purchase fetched successfully"
+            ),
+            data=res
+        )
+
+    async def get_purchases_by_supplier_id(self,data:GetPurchaseBySupplierIdSchema):
+        res=await PurchaseReadDbRepo.get_by_supplier_id(data=data)
         ic(res)
         return SuccessResponseTypDict(
             detail=BaseResponseTypDict(

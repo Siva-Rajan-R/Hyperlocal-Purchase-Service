@@ -2,7 +2,8 @@ from ..main import PURCHAESE_COLLECTION, PURCHASE_STATS_COLLECTION
 from ..models.purchase_model import PurchaseReadModel
 from icecream import ic
 from typing import List,Optional
-from schemas.v1.purchase_schemas.request_schema import GetAllPurchaseSchemas,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema
+from schemas.v1.purchase_schemas.request_schema import GetAllPurchaseSchemas,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema
+
 
 
 
@@ -77,6 +78,34 @@ class PurchaseReadDbRepo:
             query,
             {"_id": 0}
         )
+
+    @staticmethod
+    async def get_by_product_id(
+        data: GetPurchaseByProductIdSchema
+    ) -> List[dict]:
+        query = {
+            "shop_id": data.shop_id,
+            "items.product_id": data.product_id
+        }
+        cursor = PURCHAESE_COLLECTION.find(
+            query,
+            {"_id": 0}
+        ).skip((data.offset - 1) * data.limit).limit(data.limit)
+        return await cursor.to_list(length=None)
+
+    @staticmethod
+    async def get_by_supplier_id(
+        data: GetPurchaseBySupplierIdSchema
+    ) -> List[dict]:
+        query = {
+            "shop_id": data.shop_id,
+            "supplier.supplier_id": data.supplier_id
+        }
+        cursor = PURCHAESE_COLLECTION.find(
+            query,
+            {"_id": 0}
+        ).skip((data.offset - 1) * data.limit).limit(data.limit)
+        return await cursor.to_list(length=None)
     
     # @staticmethod
     # async def get_all_purchases(data:GetPurchaseByShopIdSchema):

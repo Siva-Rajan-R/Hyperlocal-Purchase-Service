@@ -132,3 +132,17 @@ class GetPurchaseByShopIdSchema(BaseModel):
 class GetPurchaseByIdSchema(BaseModel):
     id:str
     shop_id:str
+
+
+class GetPurchaseByProductIdSchema(BaseModel):
+    limit:int=10
+    offset:int=1
+    shop_id:str
+    product_id:str
+
+
+class GetPurchaseBySupplierIdSchema(BaseModel):
+    limit:int=10
+    offset:int=1
+    shop_id:str
+    supplier_id:str

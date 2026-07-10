@@ -320,20 +320,20 @@ class MessagingQueuePurchasegproducer:
                             sell_price=float(pricing_infos.get('sell_price', 0))
                         ))
                         
-                        if itm.get('storage_location_infos', {}).get('name') or stl_infos.get('storage_location'):
+                        if (itm.get('storage_location_infos') or {}).get('name') or stl_infos.get('storage_location'):
                             pur_stl_toadd.append(PurchaseItemsStoragelocation(
                                 storage_location_id=generate_uuid(),
                                 purchase_id=purchase_id,
                                 purchase_item_id=pur_item_id,
-                                name=itm.get('storage_location_infos', {}).get('name') or stl_infos.get('storage_location')
+                                name=(itm.get('storage_location_infos') or {}).get('name') or stl_infos.get('storage_location')
                             ))
                             
-                        if itm.get('reorder_point_infos', {}).get('reorder_point') or rop_infos.get('reorder_point'):
+                        if (itm.get('reorder_point_infos') or {}).get('reorder_point') or rop_infos.get('reorder_point'):
                             pur_rop_toadd.append(PurchaseItemsReorderPoint(
                                 reorder_point_id=generate_uuid(),
                                 purchase_id=purchase_id,
                                 purchase_item_id=pur_item_id,
-                                reorder_point=float(itm.get('reorder_point_infos', {}).get('reorder_point') or rop_infos.get('reorder_point', 0))
+                                reorder_point=float((itm.get('reorder_point_infos') or {}).get('reorder_point') or rop_infos.get('reorder_point', 0))
                             ))
 
                         variant_infos_model = ReadVariantInfos(id=variant_id, name=variant_name) if variant_id else None
@@ -421,7 +421,7 @@ class MessagingQueuePurchasegproducer:
                 else:
                     outstanding_status = "PARTIALY-PAID"
 
-                supplier_name_val = datas.get("suppliers", {}).get("name", "")
+                supplier_name_val = (datas.get("suppliers") or {}).get("name", "")
                 supplier_info = SupplierInfo(supplier_id=supplier_id, supplier_name=supplier_name_val)
                 
                 cf_dict = {}
