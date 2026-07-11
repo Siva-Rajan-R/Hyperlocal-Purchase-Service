@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional,List
+from typing import Optional,List,Literal
 from datetime import date
 from core.data_formats.enums.purchase_enums import PurchasePaymentMethods,PurchaseTypeEnums
 from .custom_types import PurchaseCalculationInfos,PurchaseChargeInfos,PurchaseItemInfos,PurchasePaymentInfos,PurchasePaymentMethods,PurchaseStorageLocationInfos,PurchasePricingInfos,PurchaseBatchInfosType,PurchaseSerialnoInfosType,PurchaseReorderPointInfosType,PurchaseStocksInfosType
@@ -12,7 +12,7 @@ class CreatePurchaseItemsSchema(BaseModel):
     product_id:str
     variant_id:Optional[str]=None
     batch_infos:Optional[PurchaseBatchInfosType]=None
-    serialno_infos:Optional[List[PurchaseSerialnoInfosType]]=None
+    serialno_numbers:Optional[List[str]]=None
     storage_location_infos:Optional[PurchaseStorageLocationInfos]=None
     reorder_point_infos:Optional[PurchaseReorderPointInfosType]=None
     pricing_infos:PurchasePricingInfos
@@ -22,9 +22,7 @@ class CreatePurchaseItemsSchema(BaseModel):
 class UpdatePurchaseItemsSchema(BaseModel):
     id:str
     product_id:str
-    variant_id:Optional[str]=None
-    batch_infos:Optional[PurchaseBatchInfosType]=None
-    serialno_infos:Optional[List[PurchaseSerialnoInfosType]]=None
+    serialno_numbers:Optional[List[str]]=None
     storage_location_infos:Optional[PurchaseStorageLocationInfos]=None
     reorder_point_infos:Optional[PurchaseReorderPointInfosType]=None
     pricing_infos:Optional[PurchasePricingInfos]=None
@@ -79,6 +77,8 @@ class UpdateReorderPointSchema(BaseModel):
     purchase_item_id:str
     reorder_point:Optional[float]=None
 
+class PurchaseGstInfos(BaseModel):
+    type:Literal['EXCLUSIVE','INCLUSIVE']
 
 # PURCHASES
 class CreatePurchaseSchema(BaseModel):
@@ -86,7 +86,7 @@ class CreatePurchaseSchema(BaseModel):
     supplier_id:str
     type:PurchaseTypeEnums
     calculation_infos:PurchaseCalculationInfos
-    gst_infos:dict
+    gst_infos:PurchaseGstInfos
     charges_infos:PurchaseChargeInfos
     payment_infos:List[PurchasePaymentInfos]
     

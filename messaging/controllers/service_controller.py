@@ -168,12 +168,13 @@ async def service_main_controller(msg:AbstractIncomingMessage):
         finally:
             ic("Finally publishing the event to reply exchange")
             
-            await RabbitMQMessagingConfig().publish_event(
-                routing_key=reply_key,
-                payload=payload,
-                headers=headers,
-                exchange_name=reply_exchange
-            )
+            if reply_entity_name!="None" and reply_exchange!="None":
+                await RabbitMQMessagingConfig().publish_event(
+                    routing_key=reply_key,
+                    payload=payload,
+                    headers=headers,
+                    exchange_name=reply_exchange
+                )
 
             await msg.ack()
 

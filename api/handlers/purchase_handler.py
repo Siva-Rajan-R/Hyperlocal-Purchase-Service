@@ -71,10 +71,9 @@ class HandlePurchaseRequest:
                 product_serial_numbers[product_id] = set()
 
             inc_serialnos = []
-            if item.serialno_infos:
-                for sn_info in item.serialno_infos:
-                    if sn_info.name:
-                        inc_serialnos.append(sn_info.name)
+            if item.serialno_numbers:
+                for sn_info in item.serialno_numbers:
+                    inc_serialnos.append(sn_info)
 
             for sn in inc_serialnos:
                 if sn in product_serial_numbers[product_id]:
@@ -96,7 +95,7 @@ class HandlePurchaseRequest:
 
         data_toadd=CreatePurchaseSchema(custom_fields=valid_custom_fields,**data.model_dump(exclude=['custom_fields']))
         
-        res = await self.purchase_service_obj.create(data=data)
+        res = await self.purchase_service_obj.create(data=data_toadd)
         ic(res)
 
 
@@ -110,27 +109,13 @@ class HandlePurchaseRequest:
     
 
     async def update(self,data:UpdatePurchaseSchema,user_id:str):
-        cust_field_obj = CustomFieldsService(session=self.session)
-        fields = await cust_field_obj.get_all_fields(shop_id=data.shop_id)
-        valid_custom_fields = validate_and_filter_custom_fields(data.custom_fields, fields)
+        defined_fields = await CustomFieldsService(session=self.session).get_field_by_shop_id(data=GetFieldByShopIdSchema(shop_id=data.shop_id))
+        valid_custom_fields = validate_and_filter_custom_fields(data.custom_fields, defined_fields)
         
-        final_data = UpdatePurchaseSchema(**data.model_dump(exclude=['custom_fields']))
+        final_data = UpdatePurchaseSchema(custom_fields=valid_custom_fields,**data.model_dump(exclude=['custom_fields']))
         res = await self.purchase_service_obj.update(data=final_data)
 
         if res:
-             defined_fields_map = {f['field_name']: f['id'] for f in fields}
-             cf_values = []
-             for key, val in valid_custom_fields.items():
-                 if key in defined_fields_map:
-                     cf_values.append({"field_id": defined_fields_map[key], "value": str(val), "field_name": key})
-             
-             if cf_values:
-                 bulk_data = BulkCreateCustomFieldValuesSchema(
-                     purchase_id=data.id,
-                     values=cf_values
-                 )
-                 await cust_field_obj.bulk_upsert_values(shop_id=data.shop_id, data=bulk_data)
-
              return SuccessResponseTypDict(
                  detail=BaseResponseTypDict(
                      msg="Purchase updated successfully",

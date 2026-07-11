@@ -25,12 +25,15 @@ async def verify_and_update(purchase_data: dict, headers: dict, payload: dict, r
         pricing_infos = item.get('pricing_infos') or {}
         stock_infos = item.get('stock_infos') or {}
 
+        serialno_numbers = item.get('serialno_numbers') or []
+        serialno_infos = [{"name": sn} for sn in serialno_numbers]
+
         body.append({
             'shop_id': purchase_data['shop_id'],
             'product_id': item['product_id'],
             'variant_id': item.get('variant_id'),
             'batch_infos': item.get('batch_infos'),
-            'serialno_infos': item.get('serialno_infos'),
+            'serialno_infos': serialno_infos,
             'storage_location': stl_infos.get('name'),
             'reorder_point': rop_infos.get('reorder_point'),
             'gst': item.get('gst'),
@@ -287,12 +290,12 @@ class MessagingQueuePurchasegproducer:
                         # Update transaction metadata
                         item_infos['total_pur_items'] += 1
                         buy_price_val = float(pricing_infos.get('buy_price', 0))
-                        item_infos['total_pur_cost'] += buy_price_val
+                        item_infos['total_pur_cost'] += buy_price_val*stocks
                         
                         if gst and gst.endswith('%') and gst_infos.get('type') == "EXCLUSIVE":
                             try:
                                 gst_rate = float(gst[:-1]) / 100.0
-                                item_infos['total_gst_amount'] += gst_rate * buy_price_val
+                                item_infos['total_gst_amount'] += gst_rate * (buy_price_val*stocks)
                             except ValueError:
                                 pass
                         
@@ -305,7 +308,7 @@ class MessagingQueuePurchasegproducer:
                             product_id=product_id,
                             variant_id=variant_id,
                             batch_id=batch_infos.get('id', batch_id),
-                            serial_numbers=[sn['name'] for sn in serialno_infos],
+                            serial_numbers=itm.get('serialno_numbers') or [],
                             gst=gst,
                             stocks=stocks,
                             stocks_before=stock_before,
@@ -313,7 +316,6 @@ class MessagingQueuePurchasegproducer:
                         ))
 
                         pur_pricing_toadd.append(PurchaseItemsPricing(
-                            pricing_id=generate_uuid(),
                             purchase_id=purchase_id,
                             purchase_item_id=pur_item_id,
                             buy_price=buy_price_val,
@@ -322,7 +324,6 @@ class MessagingQueuePurchasegproducer:
                         
                         if (itm.get('storage_location_infos') or {}).get('name') or stl_infos.get('storage_location'):
                             pur_stl_toadd.append(PurchaseItemsStoragelocation(
-                                storage_location_id=generate_uuid(),
                                 purchase_id=purchase_id,
                                 purchase_item_id=pur_item_id,
                                 name=(itm.get('storage_location_infos') or {}).get('name') or stl_infos.get('storage_location')
@@ -330,7 +331,6 @@ class MessagingQueuePurchasegproducer:
                             
                         if (itm.get('reorder_point_infos') or {}).get('reorder_point') or rop_infos.get('reorder_point'):
                             pur_rop_toadd.append(PurchaseItemsReorderPoint(
-                                reorder_point_id=generate_uuid(),
                                 purchase_id=purchase_id,
                                 purchase_item_id=pur_item_id,
                                 reorder_point=float((itm.get('reorder_point_infos') or {}).get('reorder_point') or rop_infos.get('reorder_point', 0))
@@ -361,7 +361,7 @@ class MessagingQueuePurchasegproducer:
                                 stocks_infos=stock_infos_model,
                                 reorder_point_infos=reorder_point_model,
                                 storage_location_infos=storage_location_model,
-                                serial_numbers=[sn.get('name', sn) if isinstance(sn, dict) else sn for sn in (itm.get('serialno_infos') or serialno_infos)],
+                                serial_numbers=itm.get('serialno_numbers') or [],
                                 sell_price=float(pricing_infos.get('sell_price', 0)),
                                 buy_price=buy_price_val,
                                 total_amount=buy_price_val * stocks,
@@ -385,7 +385,8 @@ class MessagingQueuePurchasegproducer:
                     charges_infos=charges_infos,
                     item_infos=item_infos, 
                     payment_infos=payment_infos,
-                    date=purchase_date
+                    date=purchase_date,
+                    gst_infos=gst_infos
                 )
 
                 await repo.create_bulk_purchase([purchase_model])
@@ -398,17 +399,18 @@ class MessagingQueuePurchasegproducer:
                 if pur_stl_toadd:
                     await repo.create_bulk_stl(data=pur_stl_toadd)
 
-                cust_obj=await CustomFieldsService(session=session).upsert_values(
-                data=CreateCustomFieldValueSchema(
-                        shop_id=shop_id,
-                        purchase_id=purchase_id,
-                        value_infos=[
-                            {'field_id':id,"value":value}
-                            for id,value in purchase_data.get("custom_fields").items()
-                        ]
+                if purchase_data.get("custom_fields"):
+                    cust_obj=await CustomFieldsService(session=session).upsert_values(
+                    data=CreateCustomFieldValueSchema(
+                            shop_id=shop_id,
+                            purchase_id=purchase_id,
+                            value_infos=[
+                                {'field_id':id,"value":value}
+                                for id,value in purchase_data.get("custom_fields").items()
+                            ]
+                        )
                     )
-                )
-                ic(cust_obj)
+                    ic(cust_obj)
 
                 total_amount_paid = sum(float(payment.get('amount', 0)) for payment in payment_infos)
                 total_pur_cost = float(item_infos['total_pur_cost'] + item_infos['total_gst_amount'])
@@ -421,7 +423,14 @@ class MessagingQueuePurchasegproducer:
                 else:
                     outstanding_status = "PARTIALY-PAID"
 
-                supplier_name_val = (datas.get("suppliers") or {}).get("name", "")
+                suppliers_raw = datas.get("suppliers") or {}
+                if isinstance(suppliers_raw, str):
+                    try:
+                        import ast
+                        suppliers_raw = ast.literal_eval(suppliers_raw)
+                    except Exception:
+                        suppliers_raw = {}
+                supplier_name_val = suppliers_raw.get("name", "")
                 supplier_info = SupplierInfo(supplier_id=supplier_id, supplier_name=supplier_name_val)
                 
                 cf_dict = {}
@@ -438,9 +447,7 @@ class MessagingQueuePurchasegproducer:
                     shop_id=shop_id,
                     purchase_date=purchase_date,
                     supplier=supplier_info,
-                    total_cost=total_pur_cost,
-                    total_items=item_infos['total_pur_items'],
-                    total_quantity=item_infos['total_pur_stocks'],
+                    item_infos=item_infos,
                     payment_infos=payment_infos,
                     charges_infos=charges_infos,
                     gst_infos=gst_infos,
@@ -505,6 +512,27 @@ class MessagingQueuePurchasegproducer:
                     )
                 except Exception as e:
                     ic(f"Failed to publish analytics event: {e}")
+
+                
+                try:
+                    rabbitmq_msg_obj = RabbitMQMessagingConfig()
+                    await rabbitmq_msg_obj.publish_event(
+                        routing_key="activity_logs.routing.key",
+                        exchange_name="activity_logs.exchange",
+                        payload={
+                            "shop_id": shop_id,
+                            "user_name": "Hyperlocal-User",
+                            "service": "Purchase",
+                            "action": "CREATED",
+                            "entity_type": "Purchase",
+                            "entity_id": purchase_id,
+                            "description": f"Created purchase {purchase_id}",
+                            "changes": [{"field": "id", "before": str(purchase_id), "after": "CREATED"}]
+                        },
+                        headers={}
+                    )
+                except Exception as e:
+                    ic(f"Failed to publish activity log: {e}")
 
             return {
                 "success": True,

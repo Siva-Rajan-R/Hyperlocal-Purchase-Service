@@ -66,9 +66,7 @@ class PurchaseReadModel(BaseModel):
     supplier: SupplierInfo
 
     
-    total_cost: float = 0.0
-    total_items: int = 0
-    total_quantity: int = 0
+    item_infos:dict={}
 
     payment_infos: list = []
     payment_status: str = "completed"

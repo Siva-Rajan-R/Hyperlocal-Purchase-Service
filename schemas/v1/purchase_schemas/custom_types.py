@@ -38,10 +38,8 @@ class PurchasePricingInfos(BaseModel):
     sell_price:float
 
 class PurchaseSerialnoInfosType(BaseModel):
-    id:Optional[str]=None
     name:str
 
 
 class PurchaseStocksInfosType(BaseModel):
-    id:Optional[str]=None
     stocks:float    

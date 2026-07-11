@@ -28,6 +28,9 @@ class PurchaseRepo:
             Purchase.sequence_id,
             Purchase.ui_id,
             Purchase.supplier_id,
+            Purchase.gst_infos,
+            Purchase.charges_infos,
+            Purchase.additional_infos,
             Purchase.item_infos,
             Purchase.calculation_infos,
             Purchase.payment_infos,
@@ -49,14 +52,19 @@ class PurchaseRepo:
         )
 
         self.pricing_cols=(
-            PurchaseItemsPricing.pricing_id,
+            PurchaseItemsPricing.id,
             PurchaseItemsPricing.buy_price,
             PurchaseItemsPricing.sell_price,
         )
 
         self.stl_cols=(
-            PurchaseItemsStoragelocation.storage_location_id,
+            PurchaseItemsStoragelocation.id,
             PurchaseItemsStoragelocation.name,
+        )
+
+        self.rop_cols=(
+            PurchaseItemsReorderPoint.id,
+            PurchaseItemsReorderPoint.reorder_point,
         )
 
     @start_db_transaction
@@ -141,7 +149,7 @@ class PurchaseRepo:
         stmt = (
             PurchaseItemsPricing.__table__.update()
             .where(
-                PurchaseItemsPricing.pricing_id == bindparam("b_pricing_id"),
+                PurchaseItemsPricing.id == bindparam("b_pricing_id"),
                 PurchaseItemsPricing.purchase_item_id == bindparam("b_purchase_item_id"),
                 PurchaseItemsPricing.purchase_id == bindparam("b_purchase_id"),
             )
@@ -181,7 +189,7 @@ class PurchaseRepo:
         stmt = (
             PurchaseItemsStoragelocation.__table__.update()
             .where(
-                PurchaseItemsStoragelocation.storage_location_id == bindparam("b_storage_location_id"),
+                PurchaseItemsStoragelocation.id == bindparam("b_storage_location_id"),
                 PurchaseItemsStoragelocation.purchase_item_id == bindparam("b_purchase_item_id"),
                 PurchaseItemsStoragelocation.purchase_id == bindparam("b_purchase_id"),
             )
@@ -219,12 +227,12 @@ class PurchaseRepo:
         stmt = (
             PurchaseItemsReorderPoint.__table__.update()
             .where(
-                PurchaseItemsReorderPoint.reorder_point_id == bindparam("b_reorder_point_id"),
+                PurchaseItemsReorderPoint.id == bindparam("b_reorder_point_id"),
                 PurchaseItemsReorderPoint.purchase_item_id == bindparam("b_purchase_item_id"),
                 PurchaseItemsReorderPoint.purchase_id == bindparam("b_purchase_id"),
             )
             .values(
-                name=bindparam("rop")
+                reorder_point=bindparam("rop")
             )
            
         )
@@ -287,6 +295,12 @@ class PurchaseRepo:
                 .load_only(
                     *self.stl_cols
                 ),
+
+                selectinload(Purchase.items)
+                .selectinload(PurchaseItems.reorder_point)
+                .load_only(
+                    *self.rop_cols
+                ),
             )
         )
 
@@ -319,6 +333,12 @@ class PurchaseRepo:
                 .selectinload(PurchaseItems.storage_locations)
                 .load_only(
                     *self.stl_cols
+                ),
+
+                selectinload(Purchase.items)
+                .selectinload(PurchaseItems.reorder_point)
+                .load_only(
+                    *self.rop_cols
                 ),
             )
             .offset(offset=cursor).limit(limit=data.limit)
@@ -355,6 +375,12 @@ class PurchaseRepo:
                 .selectinload(PurchaseItems.storage_locations)
                 .load_only(
                     *self.stl_cols
+                ),
+
+                selectinload(Purchase.items)
+                .selectinload(PurchaseItems.reorder_point)
+                .load_only(
+                    *self.rop_cols
                 ),
             )
         )

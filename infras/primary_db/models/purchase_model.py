@@ -20,7 +20,7 @@ class Purchase(BASE):
 
     type = Column(String, nullable=False)
     purchase_view = Column(Boolean, nullable=False)
-
+    gst_infos=Column(JSONB,nullable=False)
     calculation_infos = Column(JSONB, nullable=False)
     charges_infos = Column(JSONB, nullable=False)
     item_infos = Column(JSONB, nullable=False)
@@ -111,7 +111,6 @@ class PurchaseItemsPricing(BASE):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
 
-    pricing_id = Column(String, nullable=False)
 
     purchase_id = Column(
         String,
@@ -153,7 +152,6 @@ class PurchaseItemsReorderPoint(BASE):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
 
-    reorder_point_id = Column(String, nullable=False)
 
     purchase_id = Column(
         String,
@@ -192,8 +190,6 @@ class PurchaseItemsStoragelocation(BASE):
     __tablename__ = "purchase_items_storagelocation"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-
-    storage_location_id = Column(String, nullable=False)
 
     purchase_id = Column(
         String,

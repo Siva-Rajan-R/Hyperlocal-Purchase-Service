@@ -26,6 +26,7 @@ DB=MONGO_CLIENT["PurchaseServiceReadDb"]
 
 PURCHAESE_COLLECTION=DB['PurchaseCollections']
 PURCHASE_STATS_COLLECTION=DB['PurchaseStatsCollections']
+SUPPLIER_STATS_COLLECTION=DB['SupplierStatsCollections']
 
 
 

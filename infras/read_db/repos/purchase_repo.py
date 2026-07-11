@@ -1,4 +1,4 @@
-from ..main import PURCHAESE_COLLECTION, PURCHASE_STATS_COLLECTION
+from ..main import PURCHAESE_COLLECTION, PURCHASE_STATS_COLLECTION, SUPPLIER_STATS_COLLECTION
 from ..models.purchase_model import PurchaseReadModel
 from icecream import ic
 from typing import List,Optional
