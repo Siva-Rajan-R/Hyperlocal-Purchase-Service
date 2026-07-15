@@ -283,9 +283,11 @@ class MessagingQueuePurchasegproducer:
                         stocks = float(itm.get('stock_infos', {}).get('stocks', 0))
                         current_db_physical = float(stock_infos.get('physical_stocks', 0))
                         
-                        stock_before = current_db_physical - stocks
+                        # stock_before = the physical stock that existed BEFORE this purchase
+                        # stock_after  = stock_before + the quantity being purchased
+                        stock_before = current_db_physical
                         ic(stock_before, current_db_physical, stocks)
-                        stock_after = current_db_physical
+                        stock_after = current_db_physical + stocks
 
                         # Update transaction metadata
                         item_infos['total_pur_items'] += 1
