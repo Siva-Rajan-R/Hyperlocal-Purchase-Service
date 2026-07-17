@@ -41,12 +41,13 @@ class PurchaseReadDbRepo:
         data:GetAllPurchaseSchemas
     ) -> List[dict]:
         query = {}
+        if data.outstanding:
+            query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
 
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
         )
-
         return await cursor.to_list(length=None)
 
     @staticmethod
@@ -56,12 +57,13 @@ class PurchaseReadDbRepo:
         query = {
             "shop_id": data.shop_id
         }
+        if data.outstanding:
+            query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
 
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
         )
-
         return await cursor.to_list(length=None)
 
     @staticmethod
@@ -72,7 +74,6 @@ class PurchaseReadDbRepo:
             "shop_id": data.shop_id,
             "purchase_id": data.id,
         }
-
 
         return await PURCHAESE_COLLECTION.find_one(
             query,
@@ -87,6 +88,8 @@ class PurchaseReadDbRepo:
             "shop_id": data.shop_id,
             "items.product_id": data.product_id
         }
+        if data.outstanding:
+            query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
@@ -101,6 +104,8 @@ class PurchaseReadDbRepo:
             "shop_id": data.shop_id,
             "supplier.supplier_id": data.supplier_id
         }
+        if data.outstanding:
+            query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}

@@ -12,19 +12,20 @@ router=APIRouter(
     prefix="/purchases"
 )
 
+from core.utils.user_info import get_current_user_id
+
 SHOP_ID="37d5519b-51a1-5854-982b-4d6524171017"
-ADDED_BY="siva-user"
 
 ASYNC_PG_SESSION=Annotated[AsyncSession,Depends(get_pg_async_session)]
 
 @router.post("")
-async def create(data:CreatePurchaseSchema,session:ASYNC_PG_SESSION):
-    return await HandlePurchaseRequest(session=session).create(data=data)
+async def create(data:CreatePurchaseSchema,session:ASYNC_PG_SESSION,user_id: Optional[str] = Depends(get_current_user_id)):
+    return await HandlePurchaseRequest(session=session).create(data=data, executing_user_id=user_id or "")
 
 
 @router.put("")
-async def update(data:UpdatePurchaseSchema,session:ASYNC_PG_SESSION):
-    return await HandlePurchaseRequest(session=session).update(data=data,user_id=ADDED_BY)
+async def update(data:UpdatePurchaseSchema,session:ASYNC_PG_SESSION,user_id: Optional[str] = Depends(get_current_user_id)):
+    return await HandlePurchaseRequest(session=session).update(data=data,user_id=user_id or "")
 
 
 

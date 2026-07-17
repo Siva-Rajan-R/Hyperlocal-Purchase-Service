@@ -35,7 +35,7 @@ class UpdatePurchaseItemsDbSchema(BaseModel):
 
 # PURCHAASE PRICING
 class CreatePurchasePricingDbSchema(BaseModel):
-    pricing_id:str
+    id:str
     purchase_id:str
     purchase_item_id:str
     buy_price:float
@@ -43,7 +43,6 @@ class CreatePurchasePricingDbSchema(BaseModel):
 
 
 class UpdatePurchasePricingDbSchema(BaseModel):
-    pricing_id:str
     purchase_id:str
     purchase_item_id:str
     buy_price:Optional[float]=None
@@ -53,14 +52,12 @@ class UpdatePurchasePricingDbSchema(BaseModel):
 
 # PURCHASE STORAGE LOCATION
 class CreateStorageLocationDbSchema(BaseModel):
-    storage_location_id:int
     purchase_id:str
     purchase_item_id:str
     name:str
 
 
 class UpdateStorageLocationDbSchema(BaseModel):
-    storage_location_id:int
     purchase_id:str
     purchase_item_id:str
     name:Optional[str]=None
@@ -68,14 +65,12 @@ class UpdateStorageLocationDbSchema(BaseModel):
 
 # PURCHASE REORDER POINT
 class CreateReorderPointDbSchema(BaseModel):
-    reorder_point_id:int
     purchase_id:str
     purchase_item_id:str
     reorder_point:float
 
 
 class UpdateReorderPointDbSchema(BaseModel):
-    reorder_point_id:int
     purchase_id:str
     purchase_item_id:str
     reorder_point:Optional[float]=None

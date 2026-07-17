@@ -22,6 +22,8 @@ class CreatePurchaseItemsSchema(BaseModel):
 class UpdatePurchaseItemsSchema(BaseModel):
     id:str
     product_id:str
+    variant_id:Optional[str]=None
+    batch_infos:Optional[PurchaseBatchInfosType]=None
     serialno_numbers:Optional[List[str]]=None
     storage_location_infos:Optional[PurchaseStorageLocationInfos]=None
     reorder_point_infos:Optional[PurchaseReorderPointInfosType]=None
@@ -99,7 +101,7 @@ class CreatePurchaseSchema(BaseModel):
 
 
 class UpdatePurchaseSchema(BaseModel):
-    id:str
+    id:Optional[str]=None
     shop_id:str
     calculation_infos:Optional[PurchaseCalculationInfos]=None
 
@@ -121,28 +123,29 @@ class GetAllPurchaseSchemas(BaseModel):
     limit:int=10
     offset:int=1
     q:Optional[str]=None
+    outstanding: Optional[bool] = None
 
 class GetPurchaseByShopIdSchema(BaseModel):
     limit:int=10
     offset:int=1
     q:Optional[str]=None
     shop_id:str
-
+    outstanding: Optional[bool] = None
 
 class GetPurchaseByIdSchema(BaseModel):
     id:str
     shop_id:str
-
 
 class GetPurchaseByProductIdSchema(BaseModel):
     limit:int=10
     offset:int=1
     shop_id:str
     product_id:str
-
+    outstanding: Optional[bool] = None
 
 class GetPurchaseBySupplierIdSchema(BaseModel):
     limit:int=10
     offset:int=1
     shop_id:str
     supplier_id:str
+    outstanding: Optional[bool] = None

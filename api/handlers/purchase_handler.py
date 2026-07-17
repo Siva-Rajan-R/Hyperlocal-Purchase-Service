@@ -25,7 +25,7 @@ class HandlePurchaseRequest:
         self.purchase_service_obj=PurchaseService(session=session)
         self.purchase_types=PurchaseTypeEnums._value2member_map_.values()
 
-    async def create(self,data:CreatePurchaseSchema):
+    async def create(self,data:CreatePurchaseSchema, executing_user_id: Optional[str] = None):
         if data.type.value!=PurchaseTypeEnums.DIRECT.value:
             raise HTTPException(
                 status_code=400,
@@ -95,15 +95,25 @@ class HandlePurchaseRequest:
 
         data_toadd=CreatePurchaseSchema(custom_fields=valid_custom_fields,**data.model_dump(exclude=['custom_fields']))
         
-        res = await self.purchase_service_obj.create(data=data_toadd)
+        res = await self.purchase_service_obj.create(data=data_toadd, executing_user_id=executing_user_id)
         ic(res)
 
-
-        return SuccessResponseTypDict(
-            detail=BaseResponseTypDict(
-                msg="Purchase Creation Request Accepted",
-                status_code=202,
-                success=True
+        if res:
+            return SuccessResponseTypDict(
+                detail=BaseResponseTypDict(
+                    msg="Purchase Creation Request Accepted",
+                    status_code=202,
+                    success=True
+                )
+            )
+        
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorResponseTypDict(
+                msg="Error : Creating Purchase",
+                status_code=400,
+                description=f"Invalid data types or Invoive no already exists",
+                success=False
             )
         )
     

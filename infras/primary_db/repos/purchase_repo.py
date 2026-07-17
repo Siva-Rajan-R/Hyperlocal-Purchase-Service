@@ -149,7 +149,6 @@ class PurchaseRepo:
         stmt = (
             PurchaseItemsPricing.__table__.update()
             .where(
-                PurchaseItemsPricing.id == bindparam("b_pricing_id"),
                 PurchaseItemsPricing.purchase_item_id == bindparam("b_purchase_item_id"),
                 PurchaseItemsPricing.purchase_id == bindparam("b_purchase_id"),
             )
@@ -164,7 +163,6 @@ class PurchaseRepo:
             stmt,
             [
                 {
-                    "b_pricing_id": item.pricing_id,
                     "b_purchase_item_id": item.purchase_item_id,
                     "b_purchase_id": item.purchase_id,
                     "buy_price": item.buy_price,
@@ -189,7 +187,6 @@ class PurchaseRepo:
         stmt = (
             PurchaseItemsStoragelocation.__table__.update()
             .where(
-                PurchaseItemsStoragelocation.id == bindparam("b_storage_location_id"),
                 PurchaseItemsStoragelocation.purchase_item_id == bindparam("b_purchase_item_id"),
                 PurchaseItemsStoragelocation.purchase_id == bindparam("b_purchase_id"),
             )
@@ -203,7 +200,6 @@ class PurchaseRepo:
             stmt,
             [
                 {
-                    "b_storage_location_id": item.storage_location_id,
                     "b_purchase_item_id": item.purchase_item_id,
                     "b_purchase_id": item.purchase_id,
                     "name": item.name
@@ -227,7 +223,6 @@ class PurchaseRepo:
         stmt = (
             PurchaseItemsReorderPoint.__table__.update()
             .where(
-                PurchaseItemsReorderPoint.id == bindparam("b_reorder_point_id"),
                 PurchaseItemsReorderPoint.purchase_item_id == bindparam("b_purchase_item_id"),
                 PurchaseItemsReorderPoint.purchase_id == bindparam("b_purchase_id"),
             )
@@ -241,7 +236,6 @@ class PurchaseRepo:
             stmt,
             [
                 {
-                    "b_reorder_point_id": item.reorder_point_id,
                     "b_purchase_item_id": item.purchase_item_id,
                     "b_purchase_id": item.purchase_id,
                     "rop": item.reorder_point
