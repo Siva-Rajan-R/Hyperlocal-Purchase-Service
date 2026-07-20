@@ -22,9 +22,17 @@ class PurchaseReadDbRepo:
     
     @staticmethod
     async def add_updatereaddb(purchase: PurchaseReadModel):
+        existing_doc = await PURCHAESE_COLLECTION.find_one({"purchase_id": purchase.purchase_id, "shop_id": purchase.shop_id})
+        update_data = purchase.model_dump(mode="json")
+        if existing_doc:
+            if not update_data.get("history") and existing_doc.get("history"):
+                update_data["history"] = existing_doc["history"]
+            if not update_data.get("version") and existing_doc.get("version"):
+                update_data["version"] = existing_doc["version"]
+
         result = await PURCHAESE_COLLECTION.update_one(
             {"purchase_id": purchase.purchase_id, "shop_id": purchase.shop_id},
-            {"$set": purchase.model_dump(mode="json")},
+            {"$set": update_data},
             upsert=True
         )
         if result.acknowledged and purchase.shop_id:
@@ -34,6 +42,33 @@ class PurchaseReadDbRepo:
                 asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(purchase.shop_id, purchase.supplier.supplier_id))
         ic(result)
         return result
+
+    @staticmethod
+    async def update_purchase_with_history(purchase_data: dict, new_version: str):
+        try:
+            existing_doc = await PURCHAESE_COLLECTION.find_one({"purchase_id": purchase_data["purchase_id"], "shop_id": purchase_data["shop_id"]})
+            history = []
+            if existing_doc:
+                history = existing_doc.get("history") or []
+            
+            import datetime
+            history_entry = {
+                "version": new_version,
+                "date": str(datetime.datetime.utcnow()),
+                "payload": {k: v for k, v in purchase_data.items() if k != "history"}
+            }
+            history.append(history_entry)
+            
+            purchase_data["version"] = new_version
+            purchase_data["history"] = history
+            
+            await PURCHAESE_COLLECTION.update_one(
+                {"purchase_id": purchase_data["purchase_id"], "shop_id": purchase_data["shop_id"]},
+                {"$set": purchase_data},
+                upsert=True
+            )
+        except Exception as e:
+            ic(f"Error in update_purchase_with_history: {e}")
     
 
     @staticmethod

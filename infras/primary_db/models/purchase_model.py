@@ -20,6 +20,7 @@ class Purchase(BASE):
 
     type = Column(String, nullable=False)
     purchase_view = Column(Boolean, nullable=False)
+    version = Column(String, nullable=False, default="v1")
     gst_infos=Column(JSONB,nullable=False)
     calculation_infos = Column(JSONB, nullable=False)
     charges_infos = Column(JSONB, nullable=False)
@@ -222,3 +223,12 @@ class PurchaseItemsStoragelocation(BASE):
         "PurchaseItems",
         back_populates="storage_locations"
     )
+
+
+class PurchaseHistory(BASE):
+    __tablename__ = "purchase_history"
+    id = Column(String, primary_key=True)
+    purchase_id = Column(String, ForeignKey("purchase.id", ondelete="CASCADE"), nullable=False, index=True)
+    version = Column(String, nullable=False)
+    purchase_data = Column(JSONB, nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())

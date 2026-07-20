@@ -54,3 +54,7 @@ async def get_by_product(session:ASYNC_PG_SESSION, data:GetPurchaseByProductIdSc
 @router.get("/by/supplier/{shop_id}/{supplier_id}")
 async def get_by_supplier(session:ASYNC_PG_SESSION, data:GetPurchaseBySupplierIdSchema=Depends()):
     return await HandlePurchaseRequest(session=session).get_purchases_by_supplier_id(data=data)
+
+@router.get("/history/{shop_id}/{id}")
+async def get_purchase_history(shop_id: str, id: str, session: ASYNC_PG_SESSION):
+    return await HandlePurchaseRequest(session=session).get_purchase_history(shop_id=shop_id, id=id)

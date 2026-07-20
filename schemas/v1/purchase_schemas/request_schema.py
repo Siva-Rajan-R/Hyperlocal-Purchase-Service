@@ -149,3 +149,10 @@ class GetPurchaseBySupplierIdSchema(BaseModel):
     shop_id:str
     supplier_id:str
     outstanding: Optional[bool] = None
+
+class ClearPurchaseOutstandingSchema(BaseModel):
+    purchase_id: str
+    shop_id: str
+    amount: float
+    payment_method: str
+    notes: Optional[str] = None

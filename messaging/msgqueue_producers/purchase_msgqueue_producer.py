@@ -395,7 +395,8 @@ class MessagingQueuePurchasegproducer:
                         item_infos=item_infos, 
                         payment_infos=payment_infos,
                         date=purchase_date,
-                        gst_infos=gst_infos
+                        gst_infos=gst_infos,
+                        version="v1"
                     )
 
                     await repo.create_bulk_purchase([purchase_model])
@@ -465,8 +466,24 @@ class MessagingQueuePurchasegproducer:
                         calculations=calculation_infos,
                         custom_fields=cf_dict,
                         items=read_items,
+                        version="v1",
+                        history=[]
                     )
-                    
+
+                    history_entry = {
+                        "version": "v1",
+                        "date": str(datetime.datetime.utcnow()),
+                        "payload": purchase_read_model.model_dump(mode="json", exclude={"history"})
+                    }
+                    purchase_read_model.history = [history_entry]
+
+                    # Save initial version copy to PG history
+                    await repo.create_history(
+                        purchase_id=purchase_id,
+                        version="v1",
+                        purchase_data=purchase_read_model.model_dump(mode="json", exclude={"history"})
+                    )
+
                     await PurchaseReadDbRepo.add_updatereaddb(purchase_read_model)
 
                     if outstanding_status != "COMPLETED":

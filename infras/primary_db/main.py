@@ -9,6 +9,8 @@ ENGINE=create_async_engine(SETTINGS.PG_DATABASE_URL,echo=False, pool_size=1, max
 BASE=declarative_base()
 
 
+from sqlalchemy import text
+
 AsyncInventoryLocalSession=async_sessionmaker(ENGINE)
 
 async def init_inventory_pg_db():
@@ -17,6 +19,7 @@ async def init_inventory_pg_db():
         async with ENGINE.connect() as conn:
             # await conn.run_sync(BASE.metadata.drop_all)
             await conn.run_sync(BASE.metadata.create_all)
+            await conn.execute(text("ALTER TABLE purchase ADD COLUMN IF NOT EXISTS version VARCHAR DEFAULT 'v1';"))
             await conn.commit()
         ic("...Databse initialized successfully...")
     except Exception as e:

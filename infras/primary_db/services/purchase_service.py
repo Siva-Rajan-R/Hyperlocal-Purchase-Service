@@ -609,15 +609,28 @@ class PurchaseService:
                     pass
             item_infos['total_pur_items']+=1
 
+        old_version = getattr(pur_get_res, "version", "v1") or "v1"
+        def increment_version(version_str: str) -> str:
+            if not version_str or not version_str.startswith('v'):
+                return 'v2'
+            try:
+                num = int(version_str[1:])
+                return f"v{num + 1}"
+            except ValueError:
+                return 'v2'
+        new_version = increment_version(old_version)
+
         purchase_toadd=UpdatePurchaseDbSchema(
             id=data.id,
             shop_id=data.shop_id,
             date=data.purchase_date,
             item_infos=item_infos,
+            version=new_version,
             **data.model_dump(mode="json",exclude=['purchase_date','item_infos','id','shop_id'])
         )
 
         pur_add_res=await purchase_repo_obj.update_bulk_purchase(data=[purchase_toadd])
+        self.session.expire_all()
         ic(pur_add_res)
         if pur_add_res:
             if data.custom_fields:
@@ -836,10 +849,18 @@ class PurchaseService:
                 calculations=data.calculation_infos.model_dump(mode="json") if data.calculation_infos else (existing_read_doc.get("calculations") if existing_read_doc else {}),
                 custom_fields=cf_dict,
                 items=read_items,
-                item_infos=item_infos
+                item_infos=item_infos,
+                version=new_version
             )
             
-            await PurchaseReadDbRepo.add_updatereaddb(purchase_read_model)
+            # Save history copy to PG
+            await purchase_repo_obj.create_history(
+                purchase_id=fresh_pur.id,
+                version=new_version,
+                purchase_data=purchase_read_model.model_dump(mode="json", exclude={"history"})
+            )
+            
+            await PurchaseReadDbRepo.update_purchase_with_history(purchase_read_model.model_dump(mode="json"), new_version)
             
             # Send delta analytics event
             try:
@@ -863,6 +884,17 @@ class PurchaseService:
                             },
                             "type": update_type
                         }
+                        if update_type == "DECREMENT":
+                            last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
+                            pay_method = last_payment.get("mode") or last_payment.get("method") or "N/A"
+                            if hasattr(pay_method, "value"):
+                                pay_method = pay_method.value
+                            supplier_payload.update({
+                                "entity_name": "purchase",
+                                "entity_id": fresh_pur.id,
+                                "payment_method": str(pay_method),
+                                "notes": last_payment.get("notes") or f"cleared outstanding for the purchase"
+                            })
                         await rabbitmq_msg_obj.publish_event(
                             routing_key="suppliers.service.routing.key",
                             exchange_name="suppliers.service.exchange",
@@ -1043,6 +1075,9 @@ class PurchaseService:
     
     async def get_purchase_by_shop_id(self,data:GetPurchaseByShopIdSchema):
         return await self.purchase_repo_obj.get_purchase_by_shop_id(data=data)
+    
+    async def get_history(self, purchase_id: str):
+        return await self.purchase_repo_obj.get_history_by_purchase_id(purchase_id=purchase_id)
     
                     
             

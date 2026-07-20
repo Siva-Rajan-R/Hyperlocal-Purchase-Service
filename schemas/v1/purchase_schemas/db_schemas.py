@@ -86,6 +86,7 @@ class CreatePurchaseDbSchema(BaseModel):
     
     purchase_date:date
     invoice_no:str
+    version: Optional[str] = "v1"
 
 
 
@@ -97,6 +98,7 @@ class UpdatePurchaseDbSchema(BaseModel):
     payment_infos:Optional[List[PurchasePaymentInfos]]=None
     item_infos:Optional[dict]=None
     purchase_date:Optional[date]=None
+    version:Optional[str]=None
     
 
 

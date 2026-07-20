@@ -67,8 +67,9 @@ class HandlePurchaseRequest:
             
             validated_data[product_id].append(item)
 
-            if product_id not in product_serial_numbers:
-                product_serial_numbers[product_id] = set()
+            product_variant_key = f"{product_id}_{item.variant_id}"
+            if product_variant_key not in product_serial_numbers:
+                product_serial_numbers[product_variant_key] = set()
 
             inc_serialnos = []
             if item.serialno_numbers:
@@ -76,17 +77,17 @@ class HandlePurchaseRequest:
                     inc_serialnos.append(sn_info)
 
             for sn in inc_serialnos:
-                if sn in product_serial_numbers[product_id]:
+                if sn in product_serial_numbers[product_variant_key]:
                     raise HTTPException(
                         status_code=400,
                         detail=ErrorResponseTypDict(
                             msg="Error : Creating Purchase",
                             status_code=400,
-                            description=f"Duplicate serial number '{sn}' for the same product could not be added",
+                            description=f"Duplicate serial number '{sn}' for the same product variant could not be added",
                             success=False
                         )
                     )
-                product_serial_numbers[product_id].add(sn)
+                product_serial_numbers[product_variant_key].add(sn)
         
         # for checking the custome fields
         defined_fields = await CustomFieldsService(session=self.session).get_field_by_shop_id(data=GetFieldByShopIdSchema(shop_id=data.shop_id))
@@ -226,6 +227,30 @@ class HandlePurchaseRequest:
                 status_code=200,
                 success=True,
                 msg="Purchase fetched successfully"
+            ),
+            data=res
+        )
+
+    async def get_purchase_history(self, shop_id: str, id: str):
+        # Try MongoDB first
+        doc = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=id, shop_id=shop_id))
+        if doc and doc.get("history"):
+            return SuccessResponseTypDict(
+                detail=BaseResponseTypDict(
+                    status_code=200,
+                    success=True,
+                    msg="Purchase history fetched successfully"
+                ),
+                data=doc["history"]
+            )
+        
+        # Fallback to PostgreSQL
+        res = await self.purchase_service_obj.get_history(purchase_id=id)
+        return SuccessResponseTypDict(
+            detail=BaseResponseTypDict(
+                status_code=200,
+                success=True,
+                msg="Purchase history fetched successfully"
             ),
             data=res
         )

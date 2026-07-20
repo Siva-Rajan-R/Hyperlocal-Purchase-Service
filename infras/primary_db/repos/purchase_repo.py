@@ -34,6 +34,7 @@ class PurchaseRepo:
             Purchase.item_infos,
             Purchase.calculation_infos,
             Purchase.payment_infos,
+            Purchase.version,
             Purchase.created_at,
             Purchase.updated_at
         )
@@ -399,6 +400,33 @@ class PurchaseRepo:
         res=(await self.session.execute(stmt)).scalar_one_or_none()
         ic(res)
         return res
+
+    @start_db_transaction
+    async def create_history(self, purchase_id: str, version: str, purchase_data: dict):
+        from ..models.purchase_model import PurchaseHistory
+        import uuid
+        history = PurchaseHistory(
+            id=str(uuid.uuid4()),
+            purchase_id=purchase_id,
+            version=version,
+            purchase_data=purchase_data
+        )
+        self.session.add(history)
+        await self.session.flush()
+        return history
+
+    async def get_history_by_purchase_id(self, purchase_id: str) -> List[dict]:
+        from ..models.purchase_model import PurchaseHistory
+        stmt = select(PurchaseHistory).where(PurchaseHistory.purchase_id == purchase_id).order_by(PurchaseHistory.created_at.asc())
+        history_records = (await self.session.execute(stmt)).scalars().all()
+        return [
+            {
+                "version": record.version,
+                "created_at": record.created_at,
+                "purchase_data": record.purchase_data
+            }
+            for record in history_records
+        ]
 
 
     

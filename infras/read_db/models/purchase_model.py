@@ -77,6 +77,8 @@ class PurchaseReadModel(BaseModel):
     payment_status:str
     custom_fields: Optional[dict] = {}
     items: List[PurchaseItemReadModel] = []
+    version: Optional[str] = "v1"
+    history: Optional[List[dict]] = []
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

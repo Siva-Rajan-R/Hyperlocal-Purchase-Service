@@ -2,7 +2,8 @@ import httpx
 from icecream import ic
 
 
-BAASE_URL="http://127.0.0.1:8000"
+# BAASE_URL="http://127.0.0.1:8000"
+BAASE_URL="http://utility-service:8000"
 async def get_fields(service_name:str,shop_id:str):
     async with httpx.AsyncClient() as request:
         base_fields_req=await request.get(f"{BAASE_URL}/fields/base/by/s-name/{service_name}")
