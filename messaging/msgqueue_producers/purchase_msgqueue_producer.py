@@ -508,19 +508,9 @@ class MessagingQueuePurchasegproducer:
                     try:
                         analytics_payload = {
                             "shop_id": shop_id,
-                            "datas": [
-                                {
-                                    "purchase_id": purchase_id,
-                                    "supplier_id": supplier_id,
-                                    "product_id": item.product_id,
-                                    "variant_id": item.variant_infos.id if item.variant_infos else None,
-                                    "batch_id": item.batch_infos.id if item.batch_infos else None,
-                                    "stocks": float(item.stocks_infos.stocks) if item.stocks_infos else 0.0,
-                                    "purchase_amounts": float(item.total_amount) if item.total_amount else 0.0,
-                                    "outstanding_amounts": outstanding_amount if i == 0 else 0
-                                }
-                                for i, item in enumerate(read_items)
-                            ]
+                            "entity_name": "PURCHASE",
+                            "entity_id": str(purchase_id),
+                            "action": "CREATE"
                         }
                         await rabbitmq_msg_obj.publish_event(
                             routing_key="analytics.service.routing.key",
@@ -541,6 +531,7 @@ class MessagingQueuePurchasegproducer:
 
                     
                     try:
+                        invoice_no = order_payload.get("invoice_no") or ui_id or purchase_id
                         rabbitmq_msg_obj = RabbitMQMessagingConfig()
                         await rabbitmq_msg_obj.publish_event(
                             routing_key="activity_logs.routing.key",
@@ -550,10 +541,11 @@ class MessagingQueuePurchasegproducer:
                                 "user_name": "Hyperlocal-User",
                                 "service": "Purchase",
                                 "action": "CREATED",
-                                "entity_type": "Purchase",
-                                "entity_id": purchase_id,
-                                "description": f"Created purchase {purchase_id}",
-                                "changes": [{"field": "id", "before": str(purchase_id), "after": "CREATED"}]
+                                "entity_type": "PURCHASE",
+                                "entity_id": str(purchase_id),
+                                "entity_name": str(invoice_no),
+                                "description": f"Created Purchase {invoice_no} ({purchase_id})",
+                                "changes": []
                             },
                             headers={}
                         )

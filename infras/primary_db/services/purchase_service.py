@@ -1012,8 +1012,30 @@ class PurchaseService:
 
 
         try:
+            invoice_no = getattr(data, 'invoice_no', None) or str(data.id)
             from messaging.main import RabbitMQMessagingConfig
             rabbitmq_msg_obj = RabbitMQMessagingConfig()
+
+            def _is_empty_or_none(val):
+                if val is None: return True
+                if isinstance(val, (dict, list, set, str, tuple)) and len(val) == 0: return True
+                return str(val).strip() in ("None", "{}", "[]", "", "null", "NoneType")
+
+            dumped_updates = data.model_dump(exclude_unset=True, exclude_none=True)
+            changes = []
+            for key, new_val in dumped_updates.items():
+                if key in ["id", "shop_id", "user_id", "cur_user_id"]:
+                    continue
+                prev_val = purchase_get_res.get(key) if 'purchase_get_res' in locals() and isinstance(purchase_get_res, dict) else None
+                if _is_empty_or_none(prev_val) and _is_empty_or_none(new_val):
+                    continue
+                if prev_val != new_val and str(prev_val).strip() != str(new_val).strip():
+                    changes.append({
+                        "field": key,
+                        "before": str(prev_val) if prev_val is not None else "None",
+                        "after": str(new_val) if new_val is not None else "None"
+                    })
+
             await rabbitmq_msg_obj.publish_event(
                 routing_key="activity_logs.routing.key",
                 exchange_name="activity_logs.exchange",
@@ -1022,10 +1044,11 @@ class PurchaseService:
                     "user_name": "Hyperlocal-User",
                     "service": "Purchase",
                     "action": "UPDATED",
-                    "entity_type": "Purchase",
-                    "entity_id": data.id,
-                    "description": f"Updated purchase {data.id}",
-                    "changes": [{"field": "id", "before": str(data.id), "after": "UPDATED"}]
+                    "entity_type": "PURCHASE",
+                    "entity_id": str(data.id),
+                    "entity_name": str(invoice_no),
+                    "description": f"Updated Purchase {invoice_no} ({data.id})",
+                    "changes": changes
                 },
                 headers={}
             )
@@ -1033,10 +1056,6 @@ class PurchaseService:
             ic(f"Failed to publish activity log: {e}")
 
         return True
-    
-
-
-
 
     async def delete(self,data:DeletePurchaseSchema):
         final_data=DeletePurchaseDbSchema(**data.model_dump(mode="json"))
@@ -1044,6 +1063,7 @@ class PurchaseService:
         
         if res:
             try:
+                invoice_no = str(data.id)
                 from messaging.main import RabbitMQMessagingConfig
                 rabbitmq_msg_obj = RabbitMQMessagingConfig()
                 await rabbitmq_msg_obj.publish_event(
@@ -1053,11 +1073,12 @@ class PurchaseService:
                         "shop_id": data.shop_id,
                         "user_name": "Hyperlocal-User",
                         "service": "Purchase",
-                        "action": "DELETE",
-                        "entity_type": "Purchase",
-                        "entity_id": data.id,
-                        "description": f"Deleted purchase {data.id}",
-                        "changes": [{"field": "id", "before": str(data.id), "after": "DELETED"}]
+                        "action": "DELETED",
+                        "entity_type": "PURCHASE",
+                        "entity_id": str(data.id),
+                        "entity_name": str(invoice_no),
+                        "description": f"Deleted Purchase {invoice_no} ({data.id})",
+                        "changes": []
                     },
                     headers={}
                 )

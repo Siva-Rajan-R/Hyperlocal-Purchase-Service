@@ -266,8 +266,34 @@ class PurchaseRepo:
         return res
     
     async def get_purchases(self,data:GetAllPurchaseSchemas):
+        from datetime import datetime, timezone
         offset=data.offset-1 if data.offset>0 else 0
         cursor=offset*data.limit
+
+        conds = []
+        if getattr(data, 'query', None):
+            search_term = f"%{data.query}%"
+            conds.append(or_(
+                Purchase.id.ilike(search_term),
+                Purchase.ui_id.ilike(search_term),
+                Purchase.invoice_no.ilike(search_term),
+                Purchase.supplier_id.ilike(search_term)
+            ))
+        if getattr(data, 'from_date', None):
+            try:
+                from_dt = datetime.strptime(data.from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                conds.append(Purchase.created_at >= from_dt)
+            except Exception:
+                pass
+        if getattr(data, 'to_date', None):
+            try:
+                to_date_str = data.to_date
+                if len(to_date_str) <= 10:
+                    to_date_str += ' 23:59:59'
+                to_dt = datetime.strptime(to_date_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                conds.append(Purchase.created_at <= to_dt)
+            except Exception:
+                pass
 
         stmt = (
             select(Purchase)
@@ -298,18 +324,49 @@ class PurchaseRepo:
                 ),
             )
         )
+        if conds:
+            stmt = stmt.where(and_(*conds))
 
+        stmt = stmt.offset(offset=cursor).limit(limit=data.limit)
         res = (await self.session.execute(stmt)).scalars().all()
         ic(res)
         return res
     
     async def get_purchase_by_shop_id(self,data:GetPurchaseByShopIdSchema):
+        from datetime import datetime, timezone
         offset=data.offset-1 if data.offset>0 else 0
         cursor=offset*data.limit
 
+        conds = [Purchase.shop_id == data.shop_id]
+        if getattr(data, 'supplier_id', None):
+            conds.append(Purchase.supplier_id == data.supplier_id)
+        if getattr(data, 'query', None):
+            search_term = f"%{data.query}%"
+            conds.append(or_(
+                Purchase.id.ilike(search_term),
+                Purchase.ui_id.ilike(search_term),
+                Purchase.invoice_no.ilike(search_term),
+                Purchase.supplier_id.ilike(search_term)
+            ))
+        if getattr(data, 'from_date', None):
+            try:
+                from_dt = datetime.strptime(data.from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                conds.append(Purchase.created_at >= from_dt)
+            except Exception:
+                pass
+        if getattr(data, 'to_date', None):
+            try:
+                to_date_str = data.to_date
+                if len(to_date_str) <= 10:
+                    to_date_str += ' 23:59:59'
+                to_dt = datetime.strptime(to_date_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                conds.append(Purchase.created_at <= to_dt)
+            except Exception:
+                pass
+
         stmt = (
             select(Purchase)
-            .where(Purchase.shop_id==data.shop_id)
+            .where(and_(*conds))
             .options(
                 load_only(
                     *self.purchase_cols
