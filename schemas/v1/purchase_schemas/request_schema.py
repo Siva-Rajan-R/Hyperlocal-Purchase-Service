@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional,List,Literal
 from datetime import date
 from core.data_formats.enums.purchase_enums import PurchasePaymentMethods,PurchaseTypeEnums
@@ -122,15 +122,22 @@ class DeletePurchaseSchema(BaseModel):
 class GetAllPurchaseSchemas(BaseModel):
     limit:int=10
     offset:int=1
+    query:Optional[str]=Field(default=None,alias='q')
     q:Optional[str]=None
     outstanding: Optional[bool] = None
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
 
 class GetPurchaseByShopIdSchema(BaseModel):
     limit:int=10
     offset:int=1
+    query:Optional[str]=Field(default=None,alias='q')
     q:Optional[str]=None
     shop_id:str
+    supplier_id: Optional[str] = None
     outstanding: Optional[bool] = None
+    from_date: Optional[str] = None
+    to_date: Optional[str] = None
 
 class GetPurchaseByIdSchema(BaseModel):
     id:str

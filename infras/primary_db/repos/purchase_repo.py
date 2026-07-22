@@ -271,8 +271,9 @@ class PurchaseRepo:
         cursor=offset*data.limit
 
         conds = []
-        if getattr(data, 'query', None):
-            search_term = f"%{data.query}%"
+        search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
+        if search_q:
+            search_term = f"%{search_q}%"
             conds.append(or_(
                 Purchase.id.ilike(search_term),
                 Purchase.ui_id.ilike(search_term),
@@ -340,8 +341,9 @@ class PurchaseRepo:
         conds = [Purchase.shop_id == data.shop_id]
         if getattr(data, 'supplier_id', None):
             conds.append(Purchase.supplier_id == data.supplier_id)
-        if getattr(data, 'query', None):
-            search_term = f"%{data.query}%"
+        search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
+        if search_q:
+            search_term = f"%{search_q}%"
             conds.append(or_(
                 Purchase.id.ilike(search_term),
                 Purchase.ui_id.ilike(search_term),

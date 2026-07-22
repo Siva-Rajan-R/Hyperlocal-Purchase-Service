@@ -78,11 +78,24 @@ class PurchaseReadDbRepo:
         query = {}
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
+        search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
+        if search_q:
+            regex = {"$regex": str(search_q).strip(), "$options": "i"}
+            query["$or"] = [
+                {"invoice_no": regex},
+                {"ui_id": regex},
+                {"id": regex},
+                {"purchase_id": regex},
+                {"supplier_id": regex},
+                {"supplier.name": regex},
+                {"items.name": regex}
+            ]
 
+        offset = data.offset - 1 if data.offset > 0 else 0
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
-        )
+        ).skip(offset * data.limit).limit(data.limit)
         return await cursor.to_list(length=None)
 
     @staticmethod
@@ -92,13 +105,28 @@ class PurchaseReadDbRepo:
         query = {
             "shop_id": data.shop_id
         }
+        if getattr(data, 'supplier_id', None):
+            query["supplier_id"] = data.supplier_id
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
+        search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
+        if search_q:
+            regex = {"$regex": str(search_q).strip(), "$options": "i"}
+            query["$or"] = [
+                {"invoice_no": regex},
+                {"ui_id": regex},
+                {"id": regex},
+                {"purchase_id": regex},
+                {"supplier_id": regex},
+                {"supplier.name": regex},
+                {"items.name": regex}
+            ]
 
+        offset = data.offset - 1 if data.offset > 0 else 0
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
-        )
+        ).skip(offset * data.limit).limit(data.limit)
         return await cursor.to_list(length=None)
 
     @staticmethod
