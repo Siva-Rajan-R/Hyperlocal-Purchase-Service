@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -11,8 +11,8 @@ class ReadVariantInfos(BaseModel):
 class ReadBatchInfos(BaseModel):
     id: str
     name: str
-    mfg_date: Optional[datetime] = None
-    exp_date: Optional[datetime] = None
+    expiry_date: Optional[str] = None
+    manufacturing_date: Optional[str] = None
 
 class ReadStocksInfos(BaseModel):
     stocks: float
@@ -20,11 +20,11 @@ class ReadStocksInfos(BaseModel):
     stocks_after: float
 
 class ReadReorderPointInfos(BaseModel):
-    id: Optional[str] = None
+    id: str
     reorder_point: float
 
 class ReadStorageLocationInfos(BaseModel):
-    id: Optional[str] = None
+    id: str
     name: str
 
 class PurchaseItemReadModel(BaseModel):
@@ -41,7 +41,7 @@ class PurchaseItemReadModel(BaseModel):
     reorder_point_infos: Optional[ReadReorderPointInfos] = None
     storage_location_infos: Optional[ReadStorageLocationInfos] = None
     
-    serial_numbers: List[str] = []
+    serial_numbers: List[Union[str, dict]] = []
     
     sell_price: float = 0
     buy_price: float = 0
@@ -62,6 +62,7 @@ class PurchaseReadModel(BaseModel):
     shop_id: str
 
     purchase_date: datetime
+    status: str = "COMPLETED"
 
     supplier: SupplierInfo
 

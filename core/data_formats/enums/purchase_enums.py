@@ -24,3 +24,8 @@ class PurchaseViewsEnums(str,Enum):
     PO_VIEW="PO_VIEW"
     PURCHASE_VIEW="PURCHASE_VIEW"
     STOCKADJUSTMENT_VIEW="STOCKADJUSTMENT_VIEW"
+
+
+class PurchaseStatusEnums(str,Enum):
+    DRAFT="DRAFT"
+    COMPLETED="COMPLETED"

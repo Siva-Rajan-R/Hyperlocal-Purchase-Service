@@ -24,6 +24,7 @@ class PurchaseRepo:
             Purchase.date,
             Purchase.invoice_no,
             Purchase.type,
+            Purchase.status,
             Purchase.purchase_view,
             Purchase.sequence_id,
             Purchase.ui_id,
@@ -44,7 +45,6 @@ class PurchaseRepo:
             PurchaseItems.product_id,
             PurchaseItems.variant_id,
             PurchaseItems.batch_id,
-            PurchaseItems.serialno_id,
             PurchaseItems.serial_numbers,
             PurchaseItems.gst,
             PurchaseItems.stocks,
@@ -111,32 +111,54 @@ class PurchaseRepo:
 
 
     @start_db_transaction
-    async def update_bulk_purchase(self,data:List[UpdatePurchaseDbSchema]):
+    async def update_bulk_purchase(self, data: List[UpdatePurchaseDbSchema]):
         if not data:
             return True
-        final_data=[d.model_dump(mode="json",exclude_unset=True,exclude_none=True,exclude=['shop_id']) for d in data]
-        await self.session.run_sync(
-            lambda session:session.bulk_update_mappings(
-                Purchase,
-                final_data
-            )
-        )
-
+        for d in data:
+            val_dict = d.model_dump(mode="json", exclude_unset=True, exclude_none=True, exclude=['shop_id'])
+            if "id" in val_dict:
+                p_id = val_dict.pop("id")
+                stmt = (
+                    update(Purchase)
+                    .where(Purchase.id == p_id, Purchase.shop_id == d.shop_id)
+                    .values(**val_dict)
+                )
+                await self.session.execute(stmt)
         return True
 
     @start_db_transaction
-    async def update_bulk_item(self,data:List[UpdatePurchaseItemsDbSchema]):
+    async def update_bulk_item(self, data: List[UpdatePurchaseItemsDbSchema]):
         if not data:
             return True
-        
-        final_data=[d.model_dump(mode="json",exclude_unset=True,exclude_none=True,exclude=['shop_id']) for d in data]
-        await self.session.run_sync(
-            lambda session:session.bulk_update_mappings(
-                PurchaseItems,
-                final_data
-            )
-        )
+        for d in data:
+            val_dict = d.model_dump(mode="json", exclude_unset=True)
+            if "id" in val_dict:
+                i_id = val_dict.pop("id")
+                ic("update_bulk_item val_dict =>", i_id, val_dict)
+                stmt = (
+                    update(PurchaseItems)
+                    .where(PurchaseItems.id == i_id)
+                    .values(**val_dict)
+                )
+                await self.session.execute(stmt)
+        return True
 
+    @start_db_transaction
+    async def delete_bulk_items(self, item_ids: List[str]):
+        if not item_ids:
+            return True
+        await self.session.execute(
+            delete(PurchaseItems).where(PurchaseItems.id.in_(item_ids))
+        )
+        await self.session.execute(
+            delete(PurchaseItemsPricing).where(PurchaseItemsPricing.purchase_item_id.in_(item_ids))
+        )
+        await self.session.execute(
+            delete(PurchaseItemsStoragelocation).where(PurchaseItemsStoragelocation.purchase_item_id.in_(item_ids))
+        )
+        await self.session.execute(
+            delete(PurchaseItemsReorderPoint).where(PurchaseItemsReorderPoint.purchase_item_id.in_(item_ids))
+        )
         return True
     
     @start_db_transaction
@@ -444,21 +466,49 @@ class PurchaseRepo:
         return res
     
 
-    async def verify_invoice_exists(self,invoice_no:str,shop_id: str):
-        stmt=(
-            select(
-                Purchase.id
-            )
-            .where(
-                Purchase.invoice_no==invoice_no,
-                Purchase.shop_id==shop_id
-            )
+    async def find_existing_invoice(self, shop_id: str, invoice_no: str, supplier_id: Optional[str] = None) -> Optional[Purchase]:
+        if not invoice_no:
+            return None
+        conds = [
+            Purchase.shop_id == shop_id,
+            Purchase.invoice_no == invoice_no
+        ]
+        if supplier_id:
+            conds.append(Purchase.supplier_id == supplier_id)
+        stmt = (
+            select(Purchase)
+            .where(and_(*conds))
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalars().one_or_none()
+
+    async def verify_invoice_exists(self, invoice_no: str, shop_id: str, exclude_purchase_id: str = None):
+        if not invoice_no:
+            return False
+        conds = [Purchase.invoice_no == invoice_no, Purchase.shop_id == shop_id]
+        if exclude_purchase_id:
+            conds.append(Purchase.id != exclude_purchase_id)
+        stmt = (
+            select(Purchase.id)
+            .where(and_(*conds))
             .limit(1)
         )
 
-        res=(await self.session.execute(stmt)).scalar_one_or_none()
+        res = (await self.session.execute(stmt)).scalar_one_or_none()
         ic(res)
-        return res
+        return res is not None
+
+    @start_db_transaction
+    async def delete_child_items_by_purchase_id(self, purchase_id: str):
+        from ..models.purchase_model import (
+            PurchaseItems, PurchaseItemsPricing,
+            PurchaseItemsStoragelocation, PurchaseItemsReorderPoint
+        )
+        await self.session.execute(delete(PurchaseItemsPricing).where(PurchaseItemsPricing.purchase_id == purchase_id))
+        await self.session.execute(delete(PurchaseItemsStoragelocation).where(PurchaseItemsStoragelocation.purchase_id == purchase_id))
+        await self.session.execute(delete(PurchaseItemsReorderPoint).where(PurchaseItemsReorderPoint.purchase_id == purchase_id))
+        await self.session.execute(delete(PurchaseItems).where(PurchaseItems.purchase_id == purchase_id))
+        return True
 
     @start_db_transaction
     async def create_history(self, purchase_id: str, version: str, purchase_data: dict):

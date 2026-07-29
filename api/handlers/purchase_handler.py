@@ -99,6 +99,27 @@ class HandlePurchaseRequest:
         res = await self.purchase_service_obj.create(data=data_toadd, executing_user_id=executing_user_id)
         ic(res)
 
+        if isinstance(res, dict) and res.get("success", True) is False:
+            raise HTTPException(
+                status_code=400,
+                detail=ErrorResponseTypDict(
+                    msg=res.get("msg", "Error : Creating Purchase"),
+                    status_code=400,
+                    description=res.get("msg", "Invoice number already exists"),
+                    success=False
+                )
+            )
+
+        if isinstance(res, dict) and res.get("status") == "DRAFT" and res.get("success", True) is not False:
+            return SuccessResponseTypDict(
+                detail=BaseResponseTypDict(
+                    msg="Draft Purchase Saved Successfully",
+                    status_code=200,
+                    success=True
+                ),
+                data=res
+            )
+
         if res:
             return SuccessResponseTypDict(
                 detail=BaseResponseTypDict(

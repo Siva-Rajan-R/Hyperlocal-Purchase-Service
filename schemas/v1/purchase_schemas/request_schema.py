@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional,List,Literal
+from typing import Optional,List,Literal,Union
 from datetime import date
 from core.data_formats.enums.purchase_enums import PurchasePaymentMethods,PurchaseTypeEnums
 from .custom_types import PurchaseCalculationInfos,PurchaseChargeInfos,PurchaseItemInfos,PurchasePaymentInfos,PurchasePaymentMethods,PurchaseStorageLocationInfos,PurchasePricingInfos,PurchaseBatchInfosType,PurchaseSerialnoInfosType,PurchaseReorderPointInfosType,PurchaseStocksInfosType
@@ -12,7 +12,7 @@ class CreatePurchaseItemsSchema(BaseModel):
     product_id:str
     variant_id:Optional[str]=None
     batch_infos:Optional[PurchaseBatchInfosType]=None
-    serialno_numbers:Optional[List[str]]=None
+    serialno_numbers:Optional[List[Union[str, PurchaseSerialnoInfosType, dict]]]=None
     storage_location_infos:Optional[PurchaseStorageLocationInfos]=None
     reorder_point_infos:Optional[PurchaseReorderPointInfosType]=None
     pricing_infos:PurchasePricingInfos
@@ -24,7 +24,7 @@ class UpdatePurchaseItemsSchema(BaseModel):
     product_id:str
     variant_id:Optional[str]=None
     batch_infos:Optional[PurchaseBatchInfosType]=None
-    serialno_numbers:Optional[List[str]]=None
+    serialno_numbers:Optional[List[Union[str, PurchaseSerialnoInfosType, dict]]]=None
     storage_location_infos:Optional[PurchaseStorageLocationInfos]=None
     reorder_point_infos:Optional[PurchaseReorderPointInfosType]=None
     pricing_infos:Optional[PurchasePricingInfos]=None
@@ -84,57 +84,63 @@ class PurchaseGstInfos(BaseModel):
 
 # PURCHASES
 class CreatePurchaseSchema(BaseModel):
-    shop_id:str
-    supplier_id:str
-    type:PurchaseTypeEnums
-    calculation_infos:PurchaseCalculationInfos
-    gst_infos:PurchaseGstInfos
-    charges_infos:PurchaseChargeInfos
-    payment_infos:List[PurchasePaymentInfos]
+    id: Optional[str] = None
+    shop_id: str
+    supplier_id: str
+    type: PurchaseTypeEnums
+    status: Optional[str] = "COMPLETED"
+    calculation_infos: PurchaseCalculationInfos
+    gst_infos: PurchaseGstInfos
+    charges_infos: PurchaseChargeInfos
+    payment_infos: List[PurchasePaymentInfos]
     
-    purchase_date:date
-    items:List[CreatePurchaseItemsSchema]
-    invoice_no:str
+    purchase_date: date
+    items: List[CreatePurchaseItemsSchema]
+    invoice_no: Optional[str] = None
 
-    custom_fields:Optional[dict]={}
-
+    custom_fields: Optional[dict] = {}
 
 
 class UpdatePurchaseSchema(BaseModel):
-    id:Optional[str]=None
-    shop_id:str
-    calculation_infos:Optional[PurchaseCalculationInfos]=None
+    id: Optional[str] = None
+    shop_id: str
+    supplier_id: Optional[str] = None
+    status: Optional[str] = None
+    invoice_no: Optional[str] = None
+    calculation_infos: Optional[PurchaseCalculationInfos] = None
 
-    charges_infos:Optional[PurchaseChargeInfos]=None
-    payment_infos:Optional[List[PurchasePaymentInfos]]=None
-    purchase_date:Optional[date]=None
-    items:Optional[List[UpdatePurchaseItemsSchema]]=None
-    custom_fields:Optional[dict]={}
+    charges_infos: Optional[PurchaseChargeInfos] = None
+    payment_infos: Optional[List[PurchasePaymentInfos]] = None
+    purchase_date: Optional[date] = None
+    items: Optional[List[UpdatePurchaseItemsSchema]] = None
+    custom_fields: Optional[dict] = {}
 
 
 
 class DeletePurchaseSchema(BaseModel):
-    id:str
-    shop_id:str
+    id: str
+    shop_id: str
 
 
 
 class GetAllPurchaseSchemas(BaseModel):
-    limit:int=10
-    offset:int=1
-    query:Optional[str]=Field(default=None,alias='q')
-    q:Optional[str]=None
+    limit: int = 10
+    offset: int = 1
+    query: Optional[str] = Field(default=None, alias='q')
+    q: Optional[str] = None
+    status: Optional[str] = None
     outstanding: Optional[bool] = None
     from_date: Optional[str] = None
     to_date: Optional[str] = None
 
 class GetPurchaseByShopIdSchema(BaseModel):
-    limit:int=10
-    offset:int=1
-    query:Optional[str]=Field(default=None,alias='q')
-    q:Optional[str]=None
-    shop_id:str
+    limit: int = 10
+    offset: int = 1
+    query: Optional[str] = Field(default=None, alias='q')
+    q: Optional[str] = None
+    shop_id: str
     supplier_id: Optional[str] = None
+    status: Optional[str] = None
     outstanding: Optional[bool] = None
     from_date: Optional[str] = None
     to_date: Optional[str] = None

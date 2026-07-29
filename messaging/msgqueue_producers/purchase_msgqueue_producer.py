@@ -13,8 +13,26 @@ from typing import Optional, List, Dict, Any
 import datetime
 from infras.primary_db.services.customfield_service import CustomFieldsService
 from schemas.v1.request_schemas.customfield_schema import CreateCustomFieldSchema,CreateCustomFieldValueSchema,BulkCreateCustomFieldValuesSchema,UpdateCustomFieldSchema,UpdateCustomFieldValueSchema,GetFieldByShopIdSchema,GetFieldById,GetFieldByName,GetValueByIdName,GetvaluesByCustomerId
+from schemas.v1.purchase_schemas.request_schema import GetPurchaseByIdSchema
 
 
+
+
+async def fetch_ui_id_from_utility(shop_id: str) -> str:
+    ui_id_res = await get_ui_id(shop_id=shop_id, entity_name="PURCHASE")
+    ic("utility get_ui_id res => ", ui_id_res)
+    if isinstance(ui_id_res, str) and ui_id_res:
+        return ui_id_res
+    if isinstance(ui_id_res, dict):
+        if "ui_id" in ui_id_res:
+            return str(ui_id_res["ui_id"])
+        if "formatted_ui_id" in ui_id_res:
+            return str(ui_id_res["formatted_ui_id"])
+        if "prefix" in ui_id_res and "current_number" in ui_id_res:
+            return f"{ui_id_res['prefix']}-{ui_id_res['current_number']}"
+        if "prefix" in ui_id_res and "number" in ui_id_res:
+            return f"{ui_id_res['prefix']}-{ui_id_res['number']}"
+    return f"PUR-{generate_uuid()[:6].upper()}"
 
 
 async def verify_and_update(purchase_data: dict, headers: dict, payload: dict, rabbitmq_connection: Any):
@@ -26,7 +44,7 @@ async def verify_and_update(purchase_data: dict, headers: dict, payload: dict, r
         stock_infos = item.get('stock_infos') or {}
 
         serialno_numbers = item.get('serialno_numbers') or []
-        serialno_infos = [{"name": sn} for sn in serialno_numbers]
+        serialno_infos = [sn if isinstance(sn, dict) else {"name": str(sn)} for sn in serialno_numbers]
 
         body.append({
             'shop_id': purchase_data['shop_id'],
@@ -158,13 +176,56 @@ class MessagingQueuePurchasegproducer:
         # STEP-3: PARSE AND PERSIST TRANSACTION RECORD
         if current_step == "FETCHING_PRODUCTS":
             try:
-                purchase_id = generate_uuid()
-                
-                ui_id_res = await get_ui_id(shop_id=purchase_data.get('shop_id'))
-                if isinstance(ui_id_res, dict) and "prefix" in ui_id_res:
-                    ui_id = f"{ui_id_res.get('prefix')}-{ui_id_res.get('current_number')}"
+                shop_id = purchase_data.get("shop_id")
+                invoice_no = purchase_data.get("invoice_no")
+                incoming_id = purchase_data.get("id") or purchase_data.get("purchase_id")
+
+                existing_purchase_id = None
+                existing_purchase_status = None
+                existing_purchase_ui_id = None
+                existing_read_doc = None
+
+                async with AsyncInventoryLocalSession() as session_check:
+                    repo_check = PurchaseRepo(session_check)
+                    if incoming_id:
+                        found_pg = await repo_check.get_purchase_by_id(GetPurchaseByIdSchema(id=incoming_id, shop_id=shop_id))
+                        if found_pg:
+                            existing_purchase_id = found_pg.id
+                            existing_purchase_status = str(found_pg.status.value) if hasattr(found_pg.status, 'value') else str(found_pg.status or "")
+                            existing_purchase_ui_id = found_pg.ui_id
+                        existing_read_doc = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=incoming_id, shop_id=shop_id))
+                    
+                    if not existing_purchase_id and not existing_read_doc and invoice_no:
+                        found_pg = await repo_check.find_existing_invoice(shop_id=shop_id, invoice_no=invoice_no)
+                        if found_pg:
+                            pg_status = str(found_pg.status.value) if hasattr(found_pg.status, 'value') else str(found_pg.status or "")
+                            if pg_status.upper() == "DRAFT":
+                                existing_purchase_id = found_pg.id
+                                existing_purchase_status = pg_status
+                                existing_purchase_ui_id = found_pg.ui_id
+                                incoming_id = found_pg.id
+                                existing_read_doc = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=incoming_id, shop_id=shop_id))
+                        elif not found_pg:
+                            found_read = await PurchaseReadDbRepo.find_existing_invoice(shop_id=shop_id, invoice_no=invoice_no)
+                            if found_read and found_read.get("status") == "DRAFT":
+                                existing_read_doc = found_read
+                                incoming_id = found_read.get("purchase_id") or found_read.get("id")
+                                existing_purchase_id = incoming_id
+
+                prev_status_str = ""
+                if existing_purchase_status:
+                    prev_status_str = existing_purchase_status
+                elif existing_read_doc:
+                    prev_status_str = str(existing_read_doc.get("status") or "")
+
+                if incoming_id and (prev_status_str.upper() == "DRAFT" or not prev_status_str):
+                    purchase_id = incoming_id
+                    ui_id = existing_purchase_ui_id or (existing_read_doc.get("ui_id") if existing_read_doc else None)
+                    if not ui_id:
+                        ui_id = await fetch_ui_id_from_utility(shop_id=shop_id)
                 else:
-                    ui_id = f"PUR-{int(datetime.datetime.utcnow().timestamp())}"
+                    purchase_id = generate_uuid()
+                    ui_id = await fetch_ui_id_from_utility(shop_id=shop_id)
 
                 product_res = datas.get("products") or []
                 shop_id = purchase_data.get("shop_id")
@@ -210,7 +271,7 @@ class MessagingQueuePurchasegproducer:
                         db_ui_id = prod_db['ui_id']
                         
                         type_infos = prod_db.get('type_infos', {})
-                        has_variant = type_infos.get('has_variant', False)
+                        has_variant = type_infos.get('has_variant') if 'has_variant' in type_infos else bool(prod_db.get('variants'))
                         has_batch = type_infos.get('has_batch', False)
                         has_serialno = type_infos.get('has_serialno', False)
                         gst = prod_db.get('gst', '0%')
@@ -227,8 +288,14 @@ class MessagingQueuePurchasegproducer:
                                 itm['serialno_numbers'] = []
 
                             variant_id = itm.get('variant_id')
-                            batch_infos_payload = itm.get('batch_infos') or {}
-                            # Match batch by ID or clean name fallback string
+                            raw_b_payload = itm.get('batch_infos') or {}
+                            if hasattr(raw_b_payload, 'model_dump'):
+                                batch_infos_payload = raw_b_payload.model_dump(mode='json')
+                            elif isinstance(raw_b_payload, dict):
+                                batch_infos_payload = raw_b_payload
+                            else:
+                                batch_infos_payload = {}
+                            
                             batch_target_name = batch_infos_payload.get('name')
                             batch_id = batch_infos_payload.get('id')
 
@@ -242,18 +309,27 @@ class MessagingQueuePurchasegproducer:
 
                             # --- Dynamic Scope Resolution Resolution Tree ---
                             if has_variant:
-                                variants_dict = prod_db.get('variants', {})
-                                variant_data = variants_dict.get(variant_id) if variants_dict else None
+                                variants_data_raw = prod_db.get('variants') or {}
+                                variant_data = {}
+                                if isinstance(variants_data_raw, dict):
+                                    variant_data = variants_data_raw.get(variant_id) or {}
+                                elif isinstance(variants_data_raw, list):
+                                    for v in variants_data_raw:
+                                        if v.get('id') == variant_id:
+                                            variant_data = v
+                                            break
                                 
                                 if variant_data:
                                     variant_name = variant_data.get('name', '')
                                     
                                     if has_batch:
-                                        batches_list = variant_data.get('batch_infos', [])
+                                        batches_list = variant_data.get('batch_infos') or prod_db.get('batch_infos') or []
                                         for b in batches_list:
                                             if (batch_id and b.get('id') == batch_id) or (batch_target_name and b.get('name') == batch_target_name):
                                                 batch_infos = b
                                                 break
+                                        if not batch_infos and batch_infos_payload:
+                                            batch_infos = batch_infos_payload
                                         
                                         stock_infos = batch_infos.get('stock_infos') or {}
                                         serialno_infos = batch_infos.get('serialno_infos') or [] if has_serialno else []
@@ -346,7 +422,7 @@ class MessagingQueuePurchasegproducer:
                                 ))
 
                             variant_infos_model = ReadVariantInfos(id=variant_id, name=variant_name) if variant_id else None
-                            batch_infos_model = ReadBatchInfos(id=batch_infos.get('id') or batch_id or generate_uuid(), name=batch_infos.get('name', ''),mfg_date=batch_infos.get('manufacturing_date'),exp_date=batch_infos.get('expiry_date')) if (batch_id or batch_infos_payload.get('name')) else None
+                            batch_infos_model = ReadBatchInfos(id=batch_infos.get('id') or batch_id, name=batch_infos.get('name', ''),mfg_date=batch_infos.get('manufacturing_date'),exp_date=batch_infos.get('expiry_date')) if (batch_infos.get('id') or batch_id or batch_infos_payload.get('name')) else None
                             stock_infos_model = ReadStocksInfos(stocks=stocks, stocks_before=stock_before, stocks_after=stock_after)
                             
                             reorder_point_model = ReadReorderPointInfos(
@@ -382,6 +458,16 @@ class MessagingQueuePurchasegproducer:
                     if isinstance(purchase_date, str):
                         purchase_date = datetime.datetime.strptime(purchase_date, "%Y-%m-%d").date()
 
+                    suppliers_raw = datas.get("suppliers") or {}
+                    if isinstance(suppliers_raw, str):
+                        try:
+                            import ast
+                            suppliers_raw = ast.literal_eval(suppliers_raw)
+                        except Exception:
+                            suppliers_raw = {}
+                    if isinstance(suppliers_raw, dict) and suppliers_raw.get("id"):
+                        supplier_id = suppliers_raw.get("id")
+
                     purchase_model = Purchase(
                         id=purchase_id,
                         ui_id=ui_id,
@@ -389,6 +475,7 @@ class MessagingQueuePurchasegproducer:
                         supplier_id=supplier_id,
                         invoice_no=invoice_no,
                         type=pur_type,
+                        status="COMPLETED",
                         purchase_view=True,
                         calculation_infos=calculation_infos,
                         charges_infos=charges_infos,
@@ -399,7 +486,31 @@ class MessagingQueuePurchasegproducer:
                         version="v1"
                     )
 
-                    await repo.create_bulk_purchase([purchase_model])
+                    from sqlalchemy import update, select
+                    stmt_check = select(Purchase.id).where(Purchase.id == purchase_id, Purchase.shop_id == shop_id)
+                    exists_val = (await session.execute(stmt_check)).scalar_one_or_none()
+                    if exists_val:
+                        stmt_update = (
+                            update(Purchase)
+                            .where(Purchase.id == purchase_id, Purchase.shop_id == shop_id)
+                            .values(
+                                supplier_id=supplier_id,
+                                invoice_no=invoice_no,
+                                type=pur_type,
+                                status="COMPLETED",
+                                purchase_view=True,
+                                calculation_infos=calculation_infos,
+                                charges_infos=charges_infos,
+                                item_infos=item_infos,
+                                payment_infos=payment_infos,
+                                date=purchase_date,
+                                gst_infos=gst_infos
+                            )
+                        )
+                        await session.execute(stmt_update)
+                        await repo.delete_child_items_by_purchase_id(purchase_id)
+                    else:
+                        await repo.create_bulk_purchase([purchase_model])
                     if pur_items_toadd:
                         await repo.create_bulk_items(data=pur_items_toadd)
                     if pur_pricing_toadd:
@@ -424,7 +535,7 @@ class MessagingQueuePurchasegproducer:
 
                     total_amount_paid = sum(float(payment.get('amount', 0)) for payment in payment_infos)
                     total_pur_cost = float(item_infos['total_pur_cost'] + item_infos['total_gst_amount'])
-                    outstanding_amount = abs(total_pur_cost - total_amount_paid)
+                    outstanding_amount = max(0.0, round(total_pur_cost - total_amount_paid, 2))
 
                     if outstanding_amount == 0:
                         outstanding_status = "COMPLETED"
@@ -440,7 +551,9 @@ class MessagingQueuePurchasegproducer:
                             suppliers_raw = ast.literal_eval(suppliers_raw)
                         except Exception:
                             suppliers_raw = {}
-                    supplier_name_val = suppliers_raw.get("name", "")
+                    if isinstance(suppliers_raw, dict) and suppliers_raw.get("id"):
+                        supplier_id = suppliers_raw.get("id")
+                    supplier_name_val = suppliers_raw.get("name", "") if isinstance(suppliers_raw, dict) else ""
                     supplier_info = SupplierInfo(supplier_id=supplier_id, supplier_name=supplier_name_val)
                     
                     cf_dict = {}
@@ -456,6 +569,7 @@ class MessagingQueuePurchasegproducer:
                         invoice_no=invoice_no,
                         shop_id=shop_id,
                         purchase_date=purchase_date,
+                        status="COMPLETED",
                         supplier=supplier_info,
                         item_infos=item_infos,
                         payment_infos=payment_infos,
@@ -483,6 +597,8 @@ class MessagingQueuePurchasegproducer:
                         version="v1",
                         purchase_data=purchase_read_model.model_dump(mode="json", exclude={"history"})
                     )
+
+                    await session.commit()
 
                     await PurchaseReadDbRepo.add_updatereaddb(purchase_read_model)
 
@@ -531,7 +647,7 @@ class MessagingQueuePurchasegproducer:
 
                     
                     try:
-                        invoice_no = order_payload.get("invoice_no") or ui_id or purchase_id
+                        invoice_no = purchase_data.get("invoice_no") or ui_id or purchase_id
                         rabbitmq_msg_obj = RabbitMQMessagingConfig()
                         await rabbitmq_msg_obj.publish_event(
                             routing_key="activity_logs.routing.key",

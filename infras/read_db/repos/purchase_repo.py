@@ -76,6 +76,8 @@ class PurchaseReadDbRepo:
         data:GetAllPurchaseSchemas
     ) -> List[dict]:
         query = {}
+        if getattr(data, 'status', None):
+            query["status"] = data.status
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
         search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
@@ -105,6 +107,8 @@ class PurchaseReadDbRepo:
         query = {
             "shop_id": data.shop_id
         }
+        if getattr(data, 'status', None):
+            query["status"] = data.status
         if getattr(data, 'supplier_id', None):
             query["supplier_id"] = data.supplier_id
         if data.outstanding:
@@ -283,16 +287,28 @@ class PurchaseReadDbRepo:
     #     return docs
         
     @staticmethod
-    async def check_invoice_uniqueness(shop_id: str, supplier_id: str, invoice_no: str, exclude_purchase_id: str = None) -> bool:
+    async def find_existing_invoice(shop_id: str, invoice_no: str, supplier_id: Optional[str] = None) -> Optional[dict]:
+        if not invoice_no:
+            return None
+        query = {
+            "shop_id": shop_id,
+            "invoice_no": invoice_no
+        }
+        if supplier_id:
+            query["supplier.supplier_id"] = supplier_id
+        return await PURCHAESE_COLLECTION.find_one(query)
+
+    @staticmethod
+    async def check_invoice_uniqueness(shop_id: str, invoice_no: str, exclude_purchase_id: str = None) -> bool:
         if not invoice_no:
             return True
         query = {
             "shop_id": shop_id,
-            "supplier.supplier_id": supplier_id,
             "invoice_no": invoice_no
         }
         if exclude_purchase_id:
             query["purchase_id"] = {"$ne": exclude_purchase_id}
+            query["id"] = {"$ne": exclude_purchase_id}
         existing = await PURCHAESE_COLLECTION.find_one(query)
         return existing is None
         
@@ -321,7 +337,7 @@ class PurchaseStatsReadDbRepo:
     async def update_stats(shop_id: str):
         try:
             pipeline = [
-                {"$match": {"shop_id": shop_id}},
+                {"$match": {"shop_id": shop_id, "status": {"$ne": "DRAFT"}}},
                 {
                     "$group": {
                         "_id": None,
@@ -386,7 +402,7 @@ class SupplierStatsReadDbRepo:
     async def update_supplier_stats(shop_id: str, supplier_id: str):
         try:
             pipeline = [
-                {"$match": {"shop_id": shop_id, "supplier.supplier_id": supplier_id}},
+                {"$match": {"shop_id": shop_id, "supplier.supplier_id": supplier_id, "status": {"$ne": "DRAFT"}}},
                 {
                     "$group": {
                         "_id": None,

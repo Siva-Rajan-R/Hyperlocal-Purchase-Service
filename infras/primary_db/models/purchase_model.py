@@ -19,6 +19,7 @@ class Purchase(BASE):
     invoice_no=Column(String)
 
     type = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="COMPLETED")
     purchase_view = Column(Boolean, nullable=False)
     version = Column(String, nullable=False, default="v1")
     gst_infos=Column(JSONB,nullable=False)
@@ -62,8 +63,7 @@ class PurchaseItems(BASE):
     product_id = Column(String, nullable=False)
     variant_id = Column(String)
     batch_id = Column(String)
-    serialno_id = Column(String)
-    serial_numbers=Column(ARRAY(String))
+    serial_numbers=Column(ARRAY(JSONB))
 
     gst = Column(String)
 

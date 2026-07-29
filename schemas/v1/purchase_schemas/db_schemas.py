@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional,List
+from typing import Optional,List,Union
 from datetime import date
 from core.data_formats.enums.purchase_enums import PurchasePaymentMethods,PurchaseTypeEnums
 from .custom_types import PurchaseCalculationInfos,PurchaseChargeInfos,PurchaseItemInfos,PurchasePaymentInfos,PurchasePaymentMethods,PurchaseStorageLocationInfos,PurchasePricingInfos,PurchaseReorderPointInfosType,PurchaseBatchInfosType,PurchaseSerialnoInfosType,PurchaseStocksInfosType
@@ -12,12 +12,11 @@ class CreatePurchaseItemsDbSchema(BaseModel):
     product_id:str
     variant_id:Optional[str]=None
     batch_id:Optional[str]=None
-    serialno_id:Optional[str]=None
     storage_location_infos:Optional[PurchaseStorageLocationInfos]=None
     pricing_infos:PurchasePricingInfos
     reorder_point_infos:Optional[PurchaseReorderPointInfosType]=None
     gst:str
-    serial_numbers:Optional[List]=None
+    serial_numbers:Optional[List[Union[str, PurchaseSerialnoInfosType, dict]]]=None
     stocks:float
     stocks_after:float
     stocks_before:float
@@ -26,11 +25,13 @@ class CreatePurchaseItemsDbSchema(BaseModel):
 class UpdatePurchaseItemsDbSchema(BaseModel):
     id:str
     product_id:str
+    variant_id:Optional[str]=None
+    batch_id:Optional[str]=None
     gst:Optional[str]=None
     stocks:Optional[float]=None
     stocks_before:Optional[float]=None
     stocks_after:Optional[float]=None
-    serial_numbers:Optional[List[str]]=None
+    serial_numbers:Optional[List[Union[str, PurchaseSerialnoInfosType, dict]]]=None
 
 
 # PURCHAASE PRICING
@@ -80,12 +81,13 @@ class CreatePurchaseDbSchema(BaseModel):
     shop_id:str
     supplier_id:str
     type:PurchaseTypeEnums
+    status:Optional[str]="COMPLETED"
     calculation_infos:PurchaseCalculationInfos
     charges_infos:PurchaseChargeInfos
     payment_infos:List[PurchasePaymentInfos]
     
     purchase_date:date
-    invoice_no:str
+    invoice_no:Optional[str]=None
     version: Optional[str] = "v1"
 
 
@@ -93,6 +95,9 @@ class CreatePurchaseDbSchema(BaseModel):
 class UpdatePurchaseDbSchema(BaseModel):
     id:str
     shop_id:str
+    supplier_id:Optional[str]=None
+    status:Optional[str]=None
+    invoice_no:Optional[str]=None
     calculation_infos:Optional[PurchaseCalculationInfos]=None
     charges_infos:Optional[PurchaseChargeInfos]=None
     payment_infos:Optional[List[PurchasePaymentInfos]]=None

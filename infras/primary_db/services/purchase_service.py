@@ -18,6 +18,7 @@ from datetime import date
 from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo
 from infras.read_db.models.purchase_model import PurchaseReadModel, SupplierInfo, PurchaseItemReadModel, ReadVariantInfos, ReadBatchInfos, ReadStocksInfos, ReadReorderPointInfos, ReadStorageLocationInfos
 import httpx
+import json
 from messaging.saga_producer import SagaProducer,CreateSagaStateSchema,SagaStatusEnum
 from hyperlocal_platform.core.enums.saga_state_enum import SagaStepsValueEnum
 from hyperlocal_platform.core.typed_dicts.saga_status_typ_dict import SagaStateExecutionTypDict
@@ -25,6 +26,64 @@ from infras.primary_db.services.customfield_service import CustomFieldsService
 from schemas.v1.request_schemas.customfield_schema import CreateCustomFieldSchema,CreateCustomFieldValueSchema,BulkCreateCustomFieldValuesSchema,UpdateCustomFieldSchema,UpdateCustomFieldValueSchema,GetFieldByShopIdSchema,GetFieldById,GetFieldByName,GetValueByIdName,GetvaluesByCustomerId
 
 from integrations.utility_service import get_ui_id
+
+def normalize_serial_numbers(serials):
+    if not serials:
+        return []
+    result = []
+    for item in serials:
+        if isinstance(item, str):
+            import json
+            try:
+                parsed = json.loads(item)
+                if isinstance(parsed, dict):
+                    name_val = parsed.get("name") or parsed.get("serial_no") or parsed.get("serialno") or ""
+                    res_dict = {"name": name_val}
+                    if parsed.get("id"):
+                        res_dict["id"] = parsed["id"]
+                    result.append(res_dict)
+                    continue
+            except Exception:
+                pass
+            result.append({"name": item})
+        elif isinstance(item, dict):
+            name_val = item.get("name") or item.get("serial_no") or item.get("serialno") or ""
+            res_dict = {"name": name_val}
+            if item.get("id"):
+                res_dict["id"] = item["id"]
+            result.append(res_dict)
+        elif hasattr(item, "name"):
+            res_dict = {"name": getattr(item, "name", "")}
+            if getattr(item, "id", None):
+                res_dict["id"] = getattr(item, "id")
+            result.append(res_dict)
+        else:
+            result.append({"name": str(item)})
+    return result
+
+def extract_sn_info(sn):
+    if not sn:
+        return "", None
+    if isinstance(sn, dict):
+        sn_name = sn.get("name") or sn.get("serial_no") or sn.get("serialno") or ""
+        sn_id = sn.get("id")
+        return sn_name, sn_id
+    elif isinstance(sn, str):
+        import json
+        try:
+            parsed = json.loads(sn)
+            if isinstance(parsed, dict):
+                sn_name = parsed.get("name") or parsed.get("serial_no") or parsed.get("serialno") or ""
+                sn_id = parsed.get("id")
+                return sn_name, sn_id
+            elif isinstance(parsed, str):
+                return parsed, None
+        except Exception:
+            pass
+        return sn, None
+    elif hasattr(sn, "name"):
+        return getattr(sn, "name", ""), getattr(sn, "id", None)
+    return str(sn), None
 
 async def _send_activity_log(shop_id: str, action: str, entity_id: str, description: str, changes: list = None, entity_name: str = ""):
     try:
@@ -50,13 +109,302 @@ async def _send_activity_log(shop_id: str, action: str, entity_id: str, descript
         ic(f"Failed to log activity: {e}")
 
 
+async def get_supplier_name(shop_id: str, supplier_id: str) -> str:
+    if not supplier_id:
+        return "Supplier"
+    try:
+        from infras.read_db.main import MONGO_CLIENT
+        supp_coll = MONGO_CLIENT["SupplierServiceReadDb"]["SupplierCollections"]
+        doc = await supp_coll.find_one({"id": supplier_id, "shop_id": shop_id})
+        if not doc:
+            doc = await supp_coll.find_one({"_id": supplier_id})
+        if not doc:
+            doc = await supp_coll.find_one({"id": supplier_id})
+        if doc and (doc.get("name") or doc.get("supplier_name")):
+            return doc.get("name") or doc.get("supplier_name")
+    except Exception as e:
+        ic(f"Error querying Mongo for supplier_name: {e}")
+
+    try:
+        import os
+        supplier_service_url = os.getenv("SUPPLIER_SERVICE_URL", "http://127.0.0.1:8002")
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            res = await client.get(f"{supplier_service_url}/suppliers/by/{shop_id}/{supplier_id}")
+            if res.status_code == 200:
+                res_data = res.json()
+                if res_data and res_data.get("data"):
+                    s_data = res_data["data"]
+                    if isinstance(s_data, dict) and (s_data.get("name") or s_data.get("supplier_name")):
+                        return s_data.get("name") or s_data.get("supplier_name")
+    except Exception as e:
+        ic(f"Error calling Supplier Service HTTP for supplier_name: {e}")
+
+    return "Supplier"
+
+
+async def fetch_ui_id_from_utility(shop_id: str) -> str:
+    from integrations.utility_service import get_ui_id
+    ui_id_res = await get_ui_id(shop_id=shop_id, entity_name="PURCHASE")
+    ic("utility get_ui_id res => ", ui_id_res)
+    if isinstance(ui_id_res, str) and ui_id_res:
+        return ui_id_res
+    if isinstance(ui_id_res, dict):
+        if "ui_id" in ui_id_res:
+            return str(ui_id_res["ui_id"])
+        if "formatted_ui_id" in ui_id_res:
+            return str(ui_id_res["formatted_ui_id"])
+        if "prefix" in ui_id_res and "current_number" in ui_id_res:
+            return f"{ui_id_res['prefix']}-{ui_id_res['current_number']}"
+        if "prefix" in ui_id_res and "number" in ui_id_res:
+            return f"{ui_id_res['prefix']}-{ui_id_res['number']}"
+    return f"PUR-{generate_uuid()[:6].upper()}"
+
+
 class PurchaseService:
     def __init__(self, session:AsyncSession):
         self.session=session
         self.purchase_repo_obj=PurchaseRepo(session=session)
 
 
-    async def create(self,data:CreatePurchaseSchema, executing_user_id: Optional[str] = None):
+    async def check_invoice_conflict(self, shop_id: str, invoice_no: str, current_id: Optional[str], supplier_id: Optional[str] = None) -> bool:
+        if not invoice_no:
+            return False
+
+        from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo
+
+        # Check Primary DB
+        pg_item = await self.purchase_repo_obj.find_existing_invoice(shop_id=shop_id, invoice_no=invoice_no, supplier_id=supplier_id)
+        if pg_item:
+            pg_id = pg_item.id
+            if current_id and pg_id == current_id:
+                return False
+            # Found another purchase/draft with the same invoice for this supplier
+            return True
+
+        # Check Read DB
+        read_item = await PurchaseReadDbRepo.find_existing_invoice(shop_id=shop_id, invoice_no=invoice_no, supplier_id=supplier_id)
+        if read_item:
+            read_id = read_item.get("purchase_id") or read_item.get("id")
+            if current_id and read_id == current_id:
+                return False
+            # Found another purchase/draft with the same invoice for this supplier
+            return True
+
+        return False
+
+    async def save_draft(self, data: CreatePurchaseSchema) -> dict:
+        import datetime
+        from infras.primary_db.models.purchase_model import (
+            Purchase, PurchaseItems, PurchaseItemsPricing,
+            PurchaseItemsStoragelocation, PurchaseItemsReorderPoint
+        )
+        from infras.read_db.models.purchase_model import (
+            PurchaseReadModel, PurchaseItemReadModel, SupplierInfo,
+            ReadVariantInfos, ReadBatchInfos, ReadStocksInfos,
+            ReadReorderPointInfos, ReadStorageLocationInfos
+        )
+        from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo
+        from integrations.utility_service import get_ui_id
+        from schemas.v1.purchase_schemas.db_schemas import DeletePurchaseDbSchema
+
+        shop_id = data.shop_id
+        supplier_id = data.supplier_id
+        requested_id = data.id
+
+        has_conflict = await self.check_invoice_conflict(
+            shop_id=shop_id,
+            invoice_no=data.invoice_no,
+            current_id=requested_id,
+            supplier_id=supplier_id
+        )
+
+        if has_conflict:
+            ic("Invoice number already exists on another purchase")
+            return {
+                "success": False,
+                "msg": "Invoice number already exists",
+                "id": requested_id or "",
+                "status": "DRAFT"
+            }
+
+        purchase_id = requested_id if requested_id else generate_uuid()
+
+        existing = await self.purchase_repo_obj.get_purchase_by_id(GetPurchaseByIdSchema(id=purchase_id, shop_id=shop_id))
+        existing_read = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=purchase_id, shop_id=shop_id))
+
+        ui_id = None
+        if existing:
+            ui_id = getattr(existing, 'ui_id', None)
+            await self.purchase_repo_obj.delete_purchase(DeletePurchaseDbSchema(id=purchase_id, shop_id=shop_id))
+        elif existing_read:
+            ui_id = existing_read.get("ui_id")
+
+        if not ui_id:
+            ui_id = await fetch_ui_id_from_utility(shop_id=shop_id)
+
+        pur_items_toadd = []
+        pur_pricing_toadd = []
+        pur_stl_toadd = []
+        pur_rop_toadd = []
+        read_items = []
+
+        total_pur_items = len(data.items)
+        total_pur_cost = 0.0
+        total_gst_amount = 0.0
+
+        for item in data.items:
+            item_id = generate_uuid()
+            pricing_id = generate_uuid()
+            stl_id = generate_uuid()
+            rop_id = generate_uuid()
+
+            qty = item.stock_infos.stocks
+            buy_price = item.pricing_infos.buy_price
+            sell_price = item.pricing_infos.sell_price
+            gst_str = item.gst or "0%"
+            gst_val = float(gst_str.replace("%", "").strip()) / 100.0 if "%" in gst_str else 0.0
+            gst_amt = qty * buy_price * gst_val
+            item_total = (qty * buy_price) + gst_amt
+
+            total_pur_cost += qty * buy_price
+            total_gst_amount += gst_amt
+
+            batch_id = None
+            if item.batch_infos:
+                if isinstance(item.batch_infos, dict):
+                    batch_id = item.batch_infos.get("id") or item.batch_infos.get("batch_id")
+                else:
+                    batch_id = getattr(item.batch_infos, "id", None)
+
+            normalized_serials = normalize_serial_numbers(item.serialno_numbers)
+
+            pur_items_toadd.append(PurchaseItems(
+                id=item_id,
+                purchase_id=purchase_id,
+                product_id=item.product_id,
+                variant_id=item.variant_id,
+                batch_id=batch_id,
+                serial_numbers=normalized_serials,
+                gst=item.gst,
+                stocks=qty,
+                stocks_before=0,
+                stocks_after=qty
+            ))
+
+            pur_pricing_toadd.append(PurchaseItemsPricing(
+                purchase_item_id=item_id,
+                purchase_id=purchase_id,
+                buy_price=buy_price,
+                sell_price=sell_price
+            ))
+
+            stl_name = item.storage_location_infos.name if item.storage_location_infos else "Default"
+            pur_stl_toadd.append(PurchaseItemsStoragelocation(
+                purchase_item_id=item_id,
+                purchase_id=purchase_id,
+                name=stl_name
+            ))
+
+            rop_val = item.reorder_point_infos.reorder_point if item.reorder_point_infos else 0.0
+            pur_rop_toadd.append(PurchaseItemsReorderPoint(
+                purchase_item_id=item_id,
+                purchase_id=purchase_id,
+                reorder_point=rop_val
+            ))
+
+            read_items.append(PurchaseItemReadModel(
+                id=item_id,
+                product_id=item.product_id,
+                ui_id=item_id[:8],
+                name="Draft Item",
+                variant_infos=ReadVariantInfos(id=item.variant_id, name="Variant") if item.variant_id else None,
+                stocks_infos=ReadStocksInfos(stocks=qty, stocks_before=0, stocks_after=qty),
+                reorder_point_infos=ReadReorderPointInfos(id=rop_id, reorder_point=rop_val),
+                storage_location_infos=ReadStorageLocationInfos(id=stl_id, name=stl_name),
+                serial_numbers=normalized_serials,
+                sell_price=sell_price,
+                buy_price=buy_price,
+                total_amount=item_total,
+                gst=item.gst
+            ))
+
+        item_infos_dict = {
+            "total_pur_items": total_pur_items,
+            "total_pur_cost": total_pur_cost,
+            "total_gst_amount": total_gst_amount
+        }
+
+        payment_infos_dict = [p.model_dump(mode="json") for p in data.payment_infos] if data.payment_infos else []
+        calc_dict = data.calculation_infos.model_dump(mode="json") if data.calculation_infos else {}
+        charges_dict = data.charges_infos.model_dump(mode="json") if data.charges_infos else {}
+        gst_dict = data.gst_infos.model_dump(mode="json") if data.gst_infos else {}
+
+        pur_type_val = data.type.value if hasattr(data.type, 'value') else str(data.type)
+
+        purchase_model = Purchase(
+            id=purchase_id,
+            ui_id=ui_id,
+            shop_id=shop_id,
+            supplier_id=supplier_id,
+            invoice_no=data.invoice_no,
+            type=pur_type_val,
+            status="DRAFT",
+            purchase_view=True,
+            calculation_infos=calc_dict,
+            charges_infos=charges_dict,
+            item_infos=item_infos_dict,
+            payment_infos=payment_infos_dict,
+            date=datetime.datetime.combine(data.purchase_date, datetime.time.min),
+            gst_infos=gst_dict,
+            version="v1"
+        )
+
+        await self.purchase_repo_obj.create_bulk_purchase([purchase_model])
+        if pur_items_toadd:
+            await self.purchase_repo_obj.create_bulk_items(pur_items_toadd)
+        if pur_pricing_toadd:
+            await self.purchase_repo_obj.create_bulk_pricing(pur_pricing_toadd)
+        if pur_rop_toadd:
+            await self.purchase_repo_obj.create_bulk_rop(pur_rop_toadd)
+        if pur_stl_toadd:
+            await self.purchase_repo_obj.create_bulk_stl(pur_stl_toadd)
+
+        supplier_name = await get_supplier_name(shop_id, supplier_id)
+        supplier_info = SupplierInfo(supplier_id=supplier_id, supplier_name=supplier_name)
+        purchase_read_model = PurchaseReadModel(
+            purchase_id=purchase_id,
+            ui_id=ui_id,
+            invoice_no=data.invoice_no or ui_id,
+            shop_id=shop_id,
+            purchase_date=datetime.datetime.combine(data.purchase_date, datetime.time.min),
+            status="DRAFT",
+            supplier=supplier_info,
+            item_infos=item_infos_dict,
+            payment_infos=payment_infos_dict,
+            payment_status="DRAFT",
+            outstanding_amount=0.0,
+            charges_infos=charges_dict,
+            calculations=calc_dict,
+            gst_infos=gst_dict,
+            custom_fields=data.custom_fields or {},
+            items=read_items,
+            version="v1"
+        )
+
+        await PurchaseReadDbRepo.add_updatereaddb(purchase_read_model)
+
+        return {
+            "success": True,
+            "id": purchase_id,
+            "ui_id": ui_id,
+            "status": "DRAFT",
+            "msg": "Draft purchase saved successfully"
+        }
+
+    async def create(self, data: CreatePurchaseSchema, executing_user_id: Optional[str] = None):
+        if getattr(data, 'status', None) == "DRAFT":
+            return await self.save_draft(data)
+
         # Validate paid amount against total purchase cost (QTY * (BUY PRICE + GST)) + charges
         total_item_cost = 0.0
         for item in data.items:
@@ -74,20 +422,35 @@ class PurchaseService:
             ic("Paid amount exceeds total purchase cost, leading to negative outstanding balance.")
             return False
 
-        invoice_exists=await self.purchase_repo_obj.verify_invoice_exists(invoice_no=data.invoice_no,shop_id=data.shop_id)
-        if invoice_exists:
-            ic("invoice number already exists")
-            return False
-        
+        shop_id = data.shop_id
+        requested_id = data.id
 
-        saga_id:str=generate_uuid()
-        steps={
-            "SUPPLIER_VERIFY":SagaStepsValueEnum.PENDING,
-            "PRODUCT_VERIFY_UPDATE":SagaStepsValueEnum.PENDING,
-            "FETCHING_PRODUCTS":SagaStepsValueEnum.PENDING
+        has_conflict = await self.check_invoice_conflict(
+            shop_id=shop_id,
+            invoice_no=data.invoice_no,
+            current_id=requested_id,
+            supplier_id=data.supplier_id
+        )
+
+        if has_conflict:
+            ic("Invoice number already exists on another purchase")
+            return False
+
+        effective_id = requested_id if requested_id else generate_uuid()
+
+        saga_id: str = generate_uuid()
+        steps = {
+            "SUPPLIER_VERIFY": SagaStepsValueEnum.PENDING,
+            "PRODUCT_VERIFY_UPDATE": SagaStepsValueEnum.PENDING,
+            "FETCHING_PRODUCTS": SagaStepsValueEnum.PENDING
         }
 
-        saga_data={"purchase":data.model_dump(mode="json"), "executing_user_id": executing_user_id}
+        payload_data = data.model_dump(mode="json")
+        if effective_id:
+            payload_data["id"] = effective_id
+            data.id = effective_id
+
+        saga_data = {"purchase": payload_data, "executing_user_id": executing_user_id}
         await SagaProducer.emit(
             saga_payload=CreateSagaStateSchema(
                 id=saga_id,
@@ -103,17 +466,16 @@ class PurchaseService:
             routing_key="suppliers.service.routing.key",
             exchange_name="suppliers.service.exchange",
             headers={
-                "reply_key":"purchase.producer.routing.key",
-                "reply_exchange":"purchase.producer.exchange",
-                "reply_entity_name":"create_purchase",
-                "reply_service_name":"PURCHASE",
-                "service_name":"SUPPLIERS",
-                "entity_name":"get_supplier_by_id",
-                "body":{
-                    "shop_id":data.shop_id,
-                    "id":data.supplier_id
+                "reply_key": "purchase.producer.routing.key",
+                "reply_exchange": "purchase.producer.exchange",
+                "reply_entity_name": "create_purchase",
+                "reply_service_name": "PURCHASE",
+                "service_name": "SUPPLIERS",
+                "entity_name": "get_supplier_by_id",
+                "body": {
+                    "shop_id": data.shop_id,
+                    "id": data.supplier_id
                 }
-
             }
         )
 
@@ -148,14 +510,188 @@ class PurchaseService:
         if not pur_get_res:
             ic("The give purchase was not found")
             return False
-        
-        # Enforce that existing items cannot be deleted
-        existing_item_ids = {item.id for item in pur_get_res.items}
+
+        original_supplier_id = pur_get_res.supplier_id
+        existing_read_doc_initial = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=data.id, shop_id=data.shop_id))
+        existing_read_doc = existing_read_doc_initial
+        original_outstanding = float(existing_read_doc_initial.get("outstanding_amount", 0.0)) if existing_read_doc_initial else 0.0
+        original_supplier_name = existing_read_doc_initial.get("supplier", {}).get("supplier_name") if existing_read_doc_initial else None
+
+        effective_supplier_id = data.supplier_id or pur_get_res.supplier_id
+        effective_invoice_no = data.invoice_no if data.invoice_no is not None else pur_get_res.invoice_no
+
+        if effective_invoice_no:
+            has_conflict = await self.check_invoice_conflict(
+                shop_id=data.shop_id,
+                invoice_no=effective_invoice_no,
+                current_id=data.id,
+                supplier_id=effective_supplier_id
+            )
+            if has_conflict:
+                from fastapi import HTTPException
+                from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+                raise HTTPException(
+                    status_code=400,
+                    detail=ErrorResponseTypDict(
+                        msg="Error : Updating Purchase",
+                        status_code=400,
+                        description="Invoice number already exists for this supplier",
+                        success=False
+                    )
+                )
+
+        # Handle Item Removal / Skipping / Replacement
         incoming_item_ids = {item.id for item in data.items if item.id}
-        ic(existing_item_ids,incoming_item_ids)
-        if not existing_item_ids.issubset(incoming_item_ids):
-            ic("Existing items cannot be removed.")
-            return False
+        incoming_product_ids = {item.product_id for item in data.items if item.product_id}
+
+        items_todelete_ids = []
+        removed_items = []
+
+        for db_item in pur_get_res.items:
+            if db_item.id not in incoming_item_ids and db_item.product_id not in incoming_product_ids:
+                removed_items.append(db_item)
+                items_todelete_ids.append(db_item.id)
+
+        # Fetch product metadata from Mongo for both incoming and existing DB products
+        all_product_ids = list(set([itm.product_id for itm in data.items] + [itm.product_id for itm in pur_get_res.items]))
+        from infras.read_db.main import MONGO_CLIENT
+        prod_inv_collection = MONGO_CLIENT["InventoryServiceReadDb"]["ProdInvCollections"]
+        cursor = prod_inv_collection.find({"id": {"$in": all_product_ids}, "shop_id": data.shop_id})
+        product_docs = {doc["id"]: doc async for doc in cursor}
+
+        # Check stock sufficiency and revert stock for removed/skipped items
+        for removed_item in removed_items:
+            prod_doc = product_docs.get(removed_item.product_id) or {}
+            type_infos = prod_doc.get("type_infos") or {}
+            has_batch = type_infos.get("has_batch") if type_infos and "has_batch" in type_infos else prod_doc.get("has_batch", False)
+            has_variant = type_infos.get("has_variant") if type_infos and "has_variant" in type_infos else prod_doc.get("has_variant", False)
+            has_serialno = type_infos.get("has_serialno") if type_infos and "has_serialno" in type_infos else prod_doc.get("has_serialno", False)
+            
+            target_stock_infos = {}
+            if has_variant and removed_item.variant_id:
+                variants = prod_doc.get("variants") or {}
+                variant_data = {}
+                if isinstance(variants, dict):
+                    variant_data = variants.get(removed_item.variant_id) or {}
+                elif isinstance(variants, list):
+                    for v in variants:
+                        if v.get("id") == removed_item.variant_id:
+                            variant_data = v
+                            break
+                if has_batch and removed_item.batch_id:
+                    batches_list = variant_data.get("batch_infos") or []
+                    for b in batches_list:
+                        if b.get("id") == removed_item.batch_id or b.get("name") == removed_item.batch_id:
+                            target_stock_infos = b.get("stock_infos") or {}
+                            break
+                else:
+                    target_stock_infos = variant_data.get("stock_infos") or {}
+            elif has_batch and removed_item.batch_id:
+                batches_list = prod_doc.get("batch_infos") or []
+                for b in batches_list:
+                    if b.get("id") == removed_item.batch_id or b.get("name") == removed_item.batch_id:
+                        target_stock_infos = b.get("stock_infos") or {}
+                        break
+            else:
+                target_stock_infos = prod_doc.get("stock_infos") or {}
+
+            physical_stock = float(target_stock_infos.get("physical_stocks") or 0.0)
+            purchased_qty = float(removed_item.stocks or 0.0)
+
+            if physical_stock < purchased_qty:
+                from fastapi import HTTPException
+                from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+                raise HTTPException(
+                    status_code=400,
+                    detail=ErrorResponseTypDict(
+                        msg="Error : Updating Purchase",
+                        status_code=400,
+                        description=f"Cannot remove product '{removed_item.product_id}' because current physical stock ({physical_stock}) is less than purchased stock ({purchased_qty}) to revert.",
+                        success=False
+                    )
+                )
+
+            target_batch_id = removed_item.batch_id
+            if not target_batch_id and existing_read_doc:
+                for ex_itm in existing_read_doc.get("items", []):
+                    if ex_itm.get("id") == removed_item.id or ex_itm.get("product_id") == removed_item.product_id:
+                        if ex_itm.get("batch_infos"):
+                            target_batch_id = ex_itm["batch_infos"].get("id")
+                            break
+            if not target_batch_id and has_batch:
+                if has_variant and removed_item.variant_id:
+                    variants = prod_doc.get("variants") or {}
+                    variant_data = {}
+                    if isinstance(variants, dict):
+                        variant_data = variants.get(removed_item.variant_id) or {}
+                    elif isinstance(variants, list):
+                        for v in variants:
+                            if v.get("id") == removed_item.variant_id:
+                                variant_data = v
+                                break
+                    batches_list = variant_data.get("batch_infos") or []
+                else:
+                    batches_list = prod_doc.get("batch_infos") or []
+                if batches_list:
+                    target_batch_id = batches_list[0].get("id")
+
+            removed_sn_infos = []
+            if has_variant and removed_item.variant_id:
+                variants = prod_doc.get("variants") or {}
+                variant_data = {}
+                if isinstance(variants, dict):
+                    variant_data = variants.get(removed_item.variant_id) or {}
+                elif isinstance(variants, list):
+                    for v in variants:
+                        if v.get("id") == removed_item.variant_id:
+                            variant_data = v
+                            break
+                if has_batch and removed_item.batch_id:
+                    batches_list = variant_data.get("batch_infos") or []
+                    batch_data = {}
+                    for b in batches_list:
+                        if b.get("id") == removed_item.batch_id or b.get("name") == removed_item.batch_id:
+                            batch_data = b
+                            break
+                    rem_prod_sns = batch_data.get("serialno_infos") or []
+                else:
+                    rem_prod_sns = variant_data.get("serialno_infos") or []
+            elif has_batch and removed_item.batch_id:
+                batches_list = prod_doc.get("batch_infos") or []
+                batch_data = {}
+                for b in batches_list:
+                    if b.get("id") == removed_item.batch_id or b.get("name") == removed_item.batch_id:
+                        batch_data = b
+                        break
+                rem_prod_sns = batch_data.get("serialno_infos") or []
+            else:
+                rem_prod_sns = prod_doc.get("serialno_infos") or []
+            rem_sn_map = {sn.get("name"): sn.get("id") for sn in rem_prod_sns if isinstance(sn, dict) and sn.get("name")}
+            for sn in (removed_item.serial_numbers or []):
+                sn_name, sn_id = extract_sn_info(sn)
+                resolved_id = sn_id or rem_sn_map.get(sn_name)
+                if sn_name:
+                    if resolved_id:
+                        removed_sn_infos.append({"id": resolved_id, "name": sn_name})
+                    else:
+                        removed_sn_infos.append({"name": sn_name})
+
+            inventory_toupdate.append({
+                'shop_id': data.shop_id,
+                'product_id': removed_item.product_id,
+                'variant_id': removed_item.variant_id,
+                'batch_infos': {'id': target_batch_id} if target_batch_id else None,
+                'serialno_infos': removed_sn_infos,
+                'storage_location': removed_item.storage_locations[0].name if removed_item.storage_locations else None,
+                'reorder_point': removed_item.reorder_point[0].reorder_point if removed_item.reorder_point else None,
+                'gst': removed_item.gst,
+                'buy_price': removed_item.pricing_infos[0].buy_price if removed_item.pricing_infos else 0.0,
+                'sell_price': removed_item.pricing_infos[0].sell_price if removed_item.pricing_infos else 0.0,
+                'stocks': purchased_qty,
+                'type': 'DECREMENT',
+                "entity_name": 'PURCHASE',
+                'create_stock_mov_adj': True
+            })
 
         # Prevent duplicate item IDs in update payload
         incoming_item_ids_list = [item.id for item in data.items if item.id]
@@ -192,13 +728,6 @@ class PurchaseService:
                 )
             product_variant_combos.append(combo)
 
-        # Fetch product metadata from Mongo to check has_batch / has_serialno
-        product_ids = [itm.product_id for itm in data.items]
-        from infras.read_db.main import MONGO_CLIENT
-        prod_inv_collection = MONGO_CLIENT["InventoryServiceReadDb"]["ProdInvCollections"]
-        cursor = prod_inv_collection.find({"id": {"$in": product_ids}, "shop_id": data.shop_id})
-        product_docs = {doc["id"]: doc async for doc in cursor}
-        
         # Verify that all product IDs in payload actually exist in the database
         for item in data.items:
             if item.product_id not in product_docs:
@@ -260,12 +789,15 @@ class PurchaseService:
             tot_pur_cost = buy_price_val * stock_toupdate
             temp_total_pur_cost += tot_pur_cost
             
+            effective_gst_infos = getattr(data, "gst_infos", None) or prev_gst_infos
             gst_type = ""
-            if prev_gst_infos:
-                if isinstance(prev_gst_infos, dict):
-                    gst_type = prev_gst_infos.get('type') or ""
+            if effective_gst_infos:
+                if isinstance(effective_gst_infos, dict):
+                    gst_type = effective_gst_infos.get('type') or ""
                 else:
-                    gst_type = getattr(prev_gst_infos, 'type', '') or ""
+                    gst_type = getattr(effective_gst_infos, 'type', '') or ""
+            if not gst_type:
+                gst_type = "EXCLUSIVE"
 
             if item_gst and item_gst.endswith('%') and gst_type == "EXCLUSIVE":
                 try:
@@ -281,11 +813,9 @@ class PurchaseService:
         
         final_total_cost = float(temp_total_pur_cost + temp_total_gst_amount)
         charges_infos = data.charges_infos.model_dump(mode="json") if data.charges_infos else (existing_read_doc.get("charges_infos") if existing_read_doc else {})
-        transport_charge = float(charges_infos.get("transport_charge", 0.0)) if charges_infos else 0.0
-        other_charge = float(charges_infos.get("other_charge", 0.0)) if charges_infos else 0.0
-        total_purchase_cost = final_total_cost + transport_charge + other_charge
+        total_purchase_cost = final_total_cost
         
-        if total_amount_paid > total_purchase_cost:
+        if round(total_amount_paid, 2) > round(total_purchase_cost, 2):
             from fastapi import HTTPException
             from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
             raise HTTPException(
@@ -293,7 +823,7 @@ class PurchaseService:
                 detail=ErrorResponseTypDict(
                     msg="Error : Updating Purchase",
                     status_code=400,
-                    description="Enter the proper amount and also it should not be goes to minus also",
+                    description=f"Paid amount ({total_amount_paid}) cannot exceed total purchase cost ({total_purchase_cost}).",
                     success=False
                 )
             )
@@ -301,8 +831,9 @@ class PurchaseService:
         for item in data.items:
             prod_doc = product_docs.get(item.product_id) or {}
             type_infos = prod_doc.get("type_infos") or {}
-            has_batch = type_infos.get("has_batch", False)
-            has_serialno = type_infos.get("has_serialno", False)
+            has_batch = type_infos.get("has_batch") if type_infos and "has_batch" in type_infos else prod_doc.get("has_batch", False)
+            has_serialno = type_infos.get("has_serialno") if type_infos and "has_serialno" in type_infos else prod_doc.get("has_serialno", False)
+            has_variant = type_infos.get("has_variant") if type_infos and "has_variant" in type_infos else prod_doc.get("has_variant", False)
             
             if not has_batch:
                 item.batch_infos = None
@@ -326,8 +857,11 @@ class PurchaseService:
                     b_name = item.batch_infos.name if item.batch_infos else None
                     for b in prod_doc.get("batch_infos", []):
                         if (b_id and b.get("id") == b_id) or (b_name and b.get("name") == b_name):
+                            prev_batch_id = b.get("id") or b_id
                             target_stock_infos = b.get("stock_infos") or {}
                             break
+                    if not prev_batch_id and item.batch_infos:
+                        prev_batch_id = item.batch_infos.id or item.batch_infos.name
                 else:
                     target_stock_infos = prod_doc.get("stock_infos") or {}
                 
@@ -342,58 +876,329 @@ class PurchaseService:
                 stock_diff = stock_toupdate
             else:
                 db_item = mapped_items[pur_item_id]
-                prev_batch_id=db_item.batch_id
-                
-                if prev_batch_id:
-                    incoming_batch_id = item.batch_infos.id if item.batch_infos else None
-                    incoming_batch_name = item.batch_infos.name if item.batch_infos else None
-                    
-                    existing_read_doc = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=data.id, shop_id=data.shop_id))
-                    db_batch_name = ""
-                    if existing_read_doc and "items" in existing_read_doc:
-                        for existing_itm in existing_read_doc["items"]:
-                            if existing_itm.get("id") == pur_item_id:
-                                if existing_itm.get("batch_infos"):
-                                    db_batch_name = existing_itm["batch_infos"].get("name") or ""
-                                break
-                                
-                    if incoming_batch_id and incoming_batch_id != prev_batch_id:
-                        ic("Existing batch ID cannot be modified.")
-                        return False
-                    if incoming_batch_name and incoming_batch_name != db_batch_name:
-                        ic("Existing batch name cannot be modified.")
-                        return False
+                old_product_id = db_item.product_id
 
-                prev_variant_id=db_item.variant_id
-                prev_serialno_numbers=set(db_item.serial_numbers or [])
-                prev_stocks=db_item.stocks
-                prev_stocks_before=db_item.stocks_after #the stock after should be a stock before
-                prev_stocks_after=db_item.stocks_after
-                prev_stl=db_item.storage_locations[0] if db_item.storage_locations else None
-                prev_rop=db_item.reorder_point[0] if db_item.reorder_point else None
-                prev_gst_infos=pur_get_res.gst_infos
+                if item.product_id != old_product_id:
+                    from integrations.order_service import check_product_sales_exists
+                    sales_exist = await check_product_sales_exists(shop_id=data.shop_id, product_id=old_product_id)
+                    if sales_exist:
+                        from fastapi import HTTPException
+                        from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+                        raise HTTPException(
+                            status_code=400,
+                            detail=ErrorResponseTypDict(
+                                msg="Error : Updating Purchase",
+                                status_code=400,
+                                description=f"Cannot change product '{old_product_id}' because sales have already occurred for this product",
+                                success=False
+                            )
+                        )
+                    
+                    old_batch_id = db_item.batch_id
+                    if not old_batch_id and existing_read_doc:
+                        for ex_itm in existing_read_doc.get("items", []):
+                            if ex_itm.get("id") == db_item.id or ex_itm.get("product_id") == old_product_id:
+                                if ex_itm.get("batch_infos"):
+                                    old_batch_id = ex_itm["batch_infos"].get("id")
+                                    break
+                    old_prod_doc = product_docs.get(old_product_id) or {}
+                    old_type_infos = old_prod_doc.get("type_infos") or {}
+                    old_has_batch = old_type_infos.get("has_batch", False)
+                    old_has_variant = old_type_infos.get("has_variant", False)
+                    if not old_batch_id and old_has_batch:
+                        if old_has_variant and db_item.variant_id:
+                            variants = old_prod_doc.get("variants") or {}
+                            variant_data = {}
+                            if isinstance(variants, dict):
+                                variant_data = variants.get(db_item.variant_id) or {}
+                            elif isinstance(variants, list):
+                                for v in variants:
+                                    if v.get("id") == db_item.variant_id:
+                                        variant_data = v
+                                        break
+                            batches_list = variant_data.get("batch_infos") or []
+                        else:
+                            batches_list = old_prod_doc.get("batch_infos") or []
+                        if batches_list:
+                            old_batch_id = batches_list[0].get("id")
+
+                    # Check stock sufficiency for old product before reverting
+                    old_target_stock_infos = {}
+                    if old_has_variant and db_item.variant_id:
+                        variants = old_prod_doc.get("variants") or {}
+                        variant_data = {}
+                        if isinstance(variants, dict):
+                            variant_data = variants.get(db_item.variant_id) or {}
+                        elif isinstance(variants, list):
+                            for v in variants:
+                                if v.get("id") == db_item.variant_id:
+                                    variant_data = v
+                                    break
+                        if old_has_batch and old_batch_id:
+                            batches_list = variant_data.get("batch_infos") or []
+                            for b in batches_list:
+                                if b.get("id") == old_batch_id or b.get("name") == old_batch_id:
+                                    old_target_stock_infos = b.get("stock_infos") or {}
+                                    break
+                        else:
+                            old_target_stock_infos = variant_data.get("stock_infos") or {}
+                    elif old_has_batch and old_batch_id:
+                        batches_list = old_prod_doc.get("batch_infos") or []
+                        for b in batches_list:
+                            if b.get("id") == old_batch_id or b.get("name") == old_batch_id:
+                                old_target_stock_infos = b.get("stock_infos") or {}
+                                break
+                    else:
+                        old_target_stock_infos = old_prod_doc.get("stock_infos") or {}
+
+                    old_physical_stock = float(old_target_stock_infos.get("physical_stocks") or 0.0)
+                    old_purchased_qty = float(db_item.stocks or 0.0)
+
+                    if old_physical_stock < old_purchased_qty:
+                        from fastapi import HTTPException
+                        from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+                        raise HTTPException(
+                            status_code=400,
+                            detail=ErrorResponseTypDict(
+                                msg="Error : Updating Purchase",
+                                status_code=400,
+                                description=f"Cannot remove product '{old_product_id}' because current physical stock ({old_physical_stock}) is less than purchased stock ({old_purchased_qty}) to revert.",
+                                success=False
+                            )
+                        )
+
+                    old_sn_infos = []
+                    if old_has_variant and db_item.variant_id:
+                        variants = old_prod_doc.get("variants") or {}
+                        variant_data = {}
+                        if isinstance(variants, dict):
+                            variant_data = variants.get(db_item.variant_id) or {}
+                        elif isinstance(variants, list):
+                            for v in variants:
+                                if v.get("id") == db_item.variant_id:
+                                    variant_data = v
+                                    break
+                        if old_has_batch and old_batch_id:
+                            batches_list = variant_data.get("batch_infos") or []
+                            batch_data = {}
+                            for b in batches_list:
+                                if b.get("id") == old_batch_id or b.get("name") == old_batch_id:
+                                    batch_data = b
+                                    break
+                            old_prod_sns = batch_data.get("serialno_infos") or []
+                        else:
+                            old_prod_sns = variant_data.get("serialno_infos") or []
+                    elif old_has_batch and old_batch_id:
+                        batches_list = old_prod_doc.get("batch_infos") or []
+                        batch_data = {}
+                        for b in batches_list:
+                            if b.get("id") == old_batch_id or b.get("name") == old_batch_id:
+                                batch_data = b
+                                break
+                        old_prod_sns = batch_data.get("serialno_infos") or []
+                    else:
+                        old_prod_sns = old_prod_doc.get("serialno_infos") or []
+                    old_sn_map = {sn.get("name"): sn.get("id") for sn in old_prod_sns if isinstance(sn, dict) and sn.get("name")}
+                    for sn in (db_item.serial_numbers or []):
+                        sn_name, sn_id = extract_sn_info(sn)
+                        resolved_id = sn_id or old_sn_map.get(sn_name)
+                        if sn_name:
+                            if resolved_id:
+                                old_sn_infos.append({"id": resolved_id, "name": sn_name})
+                            else:
+                                old_sn_infos.append({"name": sn_name})
+
+                    # Reverse stock for old product
+                    inventory_toupdate.append({
+                        'shop_id': data.shop_id,
+                        'product_id': old_product_id,
+                        'variant_id': db_item.variant_id,
+                        'batch_infos': {'id': old_batch_id} if old_batch_id else None,
+                        'serialno_infos': old_sn_infos,
+                        'storage_location': db_item.storage_locations[0].name if db_item.storage_locations else None,
+                        'reorder_point': db_item.reorder_point[0].reorder_point if db_item.reorder_point else None,
+                        'gst': db_item.gst,
+                        'buy_price': db_item.pricing_infos[0].buy_price if db_item.pricing_infos else 0.0,
+                        'sell_price': db_item.pricing_infos[0].sell_price if db_item.pricing_infos else 0.0,
+                        'stocks': db_item.stocks,
+                        'type': 'DECREMENT',
+                        "entity_name": 'PURCHASE',
+                        'create_stock_mov_adj': True
+                    })
+
+                    # Resolve batch_id and variant_id for the NEW product
+                    prev_variant_id = item.variant_id
+                    prev_batch_id = item.batch_infos.id if item.batch_infos else None
+                    if has_batch:
+                        b_id = item.batch_infos.id if item.batch_infos else None
+                        b_name = item.batch_infos.name if item.batch_infos else None
+                        if has_variant and prev_variant_id:
+                            variants = prod_doc.get("variants") or {}
+                            variant_data = {}
+                            if isinstance(variants, dict):
+                                variant_data = variants.get(prev_variant_id) or {}
+                            elif isinstance(variants, list):
+                                for v in variants:
+                                    if v.get("id") == prev_variant_id:
+                                        variant_data = v
+                                        break
+                            batches_list = variant_data.get("batch_infos") or []
+                        else:
+                            batches_list = prod_doc.get("batch_infos") or []
+                        for b in batches_list:
+                            if (b_id and b.get("id") == b_id) or (b_name and b.get("name") == b_name):
+                                prev_batch_id = b.get("id") or b_id
+                                break
+
+                    # Get current stock in inventory of the NEW product before incrementing
+                    new_target_stock_infos = {}
+                    if has_variant and prev_variant_id:
+                        variants = prod_doc.get("variants") or {}
+                        variant_data = {}
+                        if isinstance(variants, dict):
+                            variant_data = variants.get(prev_variant_id) or {}
+                        elif isinstance(variants, list):
+                            for v in variants:
+                                if v.get("id") == prev_variant_id:
+                                    variant_data = v
+                                    break
+                        if has_batch and prev_batch_id:
+                            batches_list = variant_data.get("batch_infos") or []
+                            for b in batches_list:
+                                if b.get("id") == prev_batch_id or b.get("name") == prev_batch_id:
+                                    new_target_stock_infos = b.get("stock_infos") or {}
+                                    break
+                        else:
+                            new_target_stock_infos = variant_data.get("stock_infos") or {}
+                    elif has_batch and prev_batch_id:
+                        for b in prod_doc.get("batch_infos", []):
+                            if b.get("id") == prev_batch_id or b.get("name") == prev_batch_id:
+                                new_target_stock_infos = b.get("stock_infos") or {}
+                                break
+                    else:
+                        new_target_stock_infos = prod_doc.get("stock_infos") or {}
+
+                    prev_stocks_before = float(new_target_stock_infos.get("physical_stocks") or 0.0)
+                    prev_stocks = 0.0
+                    prev_stocks_after = prev_stocks_before
+
+                    # Increment stock for newly replaced product
+                    inventory_toupdate.append({
+                        'shop_id': data.shop_id,
+                        'product_id': item.product_id,
+                        'variant_id': prev_variant_id,
+                        'batch_infos': item.batch_infos.model_dump(mode="json") if item.batch_infos else None,
+                        'serialno_infos': normalize_serial_numbers(item.serialno_numbers),
+                        'storage_location': item.storage_location_infos.name if item.storage_location_infos else None,
+                        'reorder_point': item.reorder_point_infos.reorder_point if item.reorder_point_infos else None,
+                        'gst': item_gst,
+                        'buy_price': item.pricing_infos.buy_price if item.pricing_infos else 0.0,
+                        'sell_price': item.pricing_infos.sell_price if item.pricing_infos else 0.0,
+                        'stocks': t_stocks,
+                        'type': 'INCREMENT',
+                        "entity_name": 'PURCHASE',
+                        'create_stock_mov_adj': True
+                    })
+                else:
+                    prev_batch_id = db_item.batch_id
+                    if prev_batch_id:
+                        incoming_batch_id = item.batch_infos.id if item.batch_infos else None
+                        incoming_batch_name = item.batch_infos.name if item.batch_infos else None
+                        
+                        existing_read_doc = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=data.id, shop_id=data.shop_id))
+                        db_batch_name = ""
+                        if existing_read_doc and "items" in existing_read_doc:
+                            for existing_itm in existing_read_doc["items"]:
+                                if existing_itm.get("id") == pur_item_id:
+                                    if existing_itm.get("batch_infos"):
+                                        db_batch_name = existing_itm["batch_infos"].get("name") or ""
+                                    break
+                                    
+                        if incoming_batch_id and incoming_batch_id != prev_batch_id:
+                            ic("Existing batch ID cannot be modified.")
+                            return False
+                        if db_batch_name and incoming_batch_name and incoming_batch_name != db_batch_name:
+                            ic("Existing batch name cannot be modified.")
+                            return False
+
+                    prev_variant_id = db_item.variant_id
+                    prev_serialno_numbers = set(db_item.serial_numbers or [])
+                    prev_stocks = db_item.stocks
+                    prev_stocks_before = db_item.stocks_after
+                    prev_stocks_after = db_item.stocks_after
+
+                prev_stl = db_item.storage_locations[0] if db_item.storage_locations else None
+                prev_rop = db_item.reorder_point[0] if db_item.reorder_point else None
+                prev_gst_infos = pur_get_res.gst_infos
                 prev_pricing = db_item.pricing_infos[0] if db_item.pricing_infos else None
                 
-                stock_toupdate=item.stock_infos.stocks
-                stock_diff=stock_toupdate-prev_stocks
-                if stock_diff < 0:
-                    from fastapi import HTTPException
-                    from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
-                    raise HTTPException(
-                        status_code=400,
-                        detail=ErrorResponseTypDict(
-                            msg="Error : Updating Purchase",
+                stock_toupdate = item.stock_infos.stocks
+                stock_diff = stock_toupdate - prev_stocks
+                if item.product_id == old_product_id and stock_diff < 0:
+                    from integrations.order_service import check_product_sales_exists
+                    sales_exist = await check_product_sales_exists(shop_id=data.shop_id, product_id=item.product_id)
+                    if sales_exist:
+                        from fastapi import HTTPException
+                        from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+                        raise HTTPException(
                             status_code=400,
-                            description="purchase cant be decresable use stock adjustment only increase",
-                            success=False
+                            detail=ErrorResponseTypDict(
+                                msg="Error : Updating Purchase",
+                                status_code=400,
+                                description=f"Cannot decrease stock for product '{item.product_id}' because sales have already occurred for this product",
+                                success=False
+                            )
                         )
-                    )
+                    # Check stock sufficiency before decrementing for same product
+                    target_stock_infos = {}
+                    if has_variant and prev_variant_id:
+                        variants = prod_doc.get("variants") or {}
+                        variant_data = {}
+                        if isinstance(variants, dict):
+                            variant_data = variants.get(prev_variant_id) or {}
+                        elif isinstance(variants, list):
+                            for v in variants:
+                                if v.get("id") == prev_variant_id:
+                                    variant_data = v
+                                    break
+                        if has_batch and prev_batch_id:
+                            batches_list = variant_data.get("batch_infos") or []
+                            for b in batches_list:
+                                if b.get("id") == prev_batch_id or b.get("name") == prev_batch_id:
+                                    target_stock_infos = b.get("stock_infos") or {}
+                                    break
+                        else:
+                            target_stock_infos = variant_data.get("stock_infos") or {}
+                    elif has_batch and prev_batch_id:
+                        for b in prod_doc.get("batch_infos", []):
+                            if b.get("id") == prev_batch_id or b.get("name") == prev_batch_id:
+                                target_stock_infos = b.get("stock_infos") or {}
+                                break
+                    else:
+                        target_stock_infos = prod_doc.get("stock_infos") or {}
+
+                    physical_stock = float(target_stock_infos.get("physical_stocks") or 0.0)
+                    if physical_stock < abs(stock_diff):
+                        from fastapi import HTTPException
+                        from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+                        raise HTTPException(
+                            status_code=400,
+                            detail=ErrorResponseTypDict(
+                                msg="Error : Updating Purchase",
+                                status_code=400,
+                                description=f"Cannot decrease stock for product '{item.product_id}' because current physical stock ({physical_stock}) is less than stock difference ({abs(stock_diff)}) to revert.",
+                                success=False
+                            )
+                        )
 
             # Validate serial numbers quantity matching total stock
-            new_serial_set = set(item.serialno_numbers or [])
-            if has_serialno and len(new_serial_set) != stock_toupdate:
-                ic("Invalid Serial Numbers count", len(new_serial_set), stock_toupdate)
+            norm_new_serials = normalize_serial_numbers(item.serialno_numbers)
+            if has_serialno and len(norm_new_serials) != stock_toupdate:
+                ic("Invalid Serial Numbers count", len(norm_new_serials), stock_toupdate)
                 return False
+
+            curr_variant_id = item.variant_id if item.variant_id is not None else prev_variant_id
+            curr_batch_id = (item.batch_infos.id if item.batch_infos else getattr(item, 'batch_id', None)) or prev_batch_id
 
             if is_new_item:
                 items_toadd.append(
@@ -401,13 +1206,13 @@ class PurchaseService:
                         id=pur_item_id,
                         purchase_id=data.id,
                         product_id=item.product_id,
-                        variant_id=item.variant_id,
-                        batch_id=prev_batch_id,
+                        variant_id=curr_variant_id,
+                        batch_id=curr_batch_id,
                         gst=item_gst,
                         stocks=item.stock_infos.stocks,
                         stocks_before=prev_stocks_before,
                         stocks_after=prev_stocks_after,
-                        serial_numbers=list(new_serial_set)
+                        serial_numbers=norm_new_serials
                     )
                 )
             else:
@@ -415,11 +1220,13 @@ class PurchaseService:
                     UpdatePurchaseItemsDbSchema(
                         id=pur_item_id,
                         product_id=item.product_id,
+                        variant_id=curr_variant_id,
+                        batch_id=curr_batch_id,
                         gst=item_gst,
                         stocks=item.stock_infos.stocks,
                         stocks_before=prev_stocks_before,
                         stocks_after=prev_stocks_after+stock_diff,
-                        serial_numbers=list(new_serial_set)
+                        serial_numbers=norm_new_serials
                     )
                 )
 
@@ -477,8 +1284,8 @@ class PurchaseService:
                 if is_new_item:
                     rop_toadd.append(
                         PurchaseItemsReorderPoint(
-                            purchase_id=data.id,
                             purchase_item_id=pur_item_id,
+                            purchase_id=data.id,
                             reorder_point=item.reorder_point_infos.reorder_point
                         )
                     )
@@ -486,32 +1293,46 @@ class PurchaseService:
                     if prev_rop:
                         rop_toupdate.append(
                             UpdateReorderPointDbSchema(
-                                purchase_id=data.id,
                                 purchase_item_id=pur_item_id,
+                                purchase_id=data.id,
                                 reorder_point=item.reorder_point_infos.reorder_point
                             )
                         )
                     else:
                         rop_toadd.append(
                             PurchaseItemsReorderPoint(
-                                purchase_id=data.id,
                                 purchase_item_id=pur_item_id,
+                                purchase_id=data.id,
                                 reorder_point=item.reorder_point_infos.reorder_point
                             )
                         )
 
             # Construct Delta stock adjustments for Inventory updates
-            # INCREMENT inventory adjustments for newly added stock or serials
-            added_sns = new_serial_set - prev_serialno_numbers
-            removed_sns = prev_serialno_numbers - new_serial_set
+            prev_sn_dict = {}
+            if not is_new_item and db_item:
+                for sn in (db_item.serial_numbers or []):
+                    sn_name, sn_id = extract_sn_info(sn)
+                    if sn_name:
+                        prev_sn_dict[sn_name] = {"id": sn_id, "name": sn_name} if sn_id else {"name": sn_name}
+
+            new_sn_dict = {}
+            for sn in norm_new_serials:
+                sn_name = sn.get("name") or ""
+                if sn_name:
+                    new_sn_dict[sn_name] = sn
+
+            added_names = set(new_sn_dict.keys()) - set(prev_sn_dict.keys())
+            removed_names = set(prev_sn_dict.keys()) - set(new_sn_dict.keys())
+
+            added_sn_infos = [new_sn_dict[name] for name in added_names]
 
             if is_new_item:
                 inventory_toupdate.append({
                     'shop_id': data.shop_id,
                     'product_id': item.product_id,
-                    'variant_id': item.variant_id,
-                    'batch_infos': item.batch_infos.model_dump(mode="json") if item.batch_infos else None,
-                    'serialno_infos': [{'name': sn} for sn in new_serial_set],
+                    'variant_id': curr_variant_id,
+                    'batch_infos': item.batch_infos.model_dump(mode="json") if item.batch_infos else ({'id': curr_batch_id} if curr_batch_id else None),
+                    'serialno_infos': norm_new_serials,
                     'storage_location': item.storage_location_infos.name if item.storage_location_infos else None,
                     'reorder_point': item.reorder_point_infos.reorder_point if item.reorder_point_infos else None,
                     'gst': item_gst,
@@ -523,88 +1344,141 @@ class PurchaseService:
                     'create_stock_mov_adj': True
                 })
             else:
-                # Existing item stock INCREMENT
-                if stock_diff > 0:
-                    inventory_toupdate.append({
-                        'shop_id': data.shop_id,
-                        'product_id': item.product_id,
-                        'variant_id': prev_variant_id,
-                        'batch_infos': {'id': prev_batch_id} if prev_batch_id else None,
-                        'serialno_infos': [{'name': sn} for sn in added_sns],
-                        'storage_location': item.storage_location_infos.name if item.storage_location_infos else None,
-                        'reorder_point': item.reorder_point_infos.reorder_point if item.reorder_point_infos else None,
-                        'gst': item_gst,
-                        'buy_price': buy_price_val,
-                        'sell_price': sell_price_val,
-                        'stocks': stock_diff,
-                        'type': 'INCREMENT',
-                        "entity_name": 'PURCHASE',
-                        'create_stock_mov_adj': True
-                    })
-                # Existing item stock DECREMENT
-                elif stock_diff < 0:
-                    inventory_toupdate.append({
-                        'shop_id': data.shop_id,
-                        'product_id': item.product_id,
-                        'variant_id': prev_variant_id,
-                        'batch_infos': {'id': prev_batch_id} if prev_batch_id else None,
-                        'serialno_infos': [{'name': sn} for sn in removed_sns],
-                        'storage_location': item.storage_location_infos.name if item.storage_location_infos else None,
-                        'reorder_point': item.reorder_point_infos.reorder_point if item.reorder_point_infos else None,
-                        'gst': item_gst,
-                        'buy_price': buy_price_val,
-                        'sell_price': sell_price_val,
-                        'stocks': abs(stock_diff),
-                        'type': 'DECREMENT',
-                        "entity_name": 'PURCHASE',
-                        'create_stock_mov_adj': True
-                    })
-                # If stock quantity is unchanged, but serial numbers were swapped/replaced:
-                else:
-                    if added_sns:
+                # Standard Delta stock adjustment only when product was NOT replaced (since product replacement handles its own DECREMENT/INCREMENT)
+                if item.product_id == old_product_id:
+                    # Existing item stock INCREMENT
+                    if stock_diff > 0:
                         inventory_toupdate.append({
                             'shop_id': data.shop_id,
                             'product_id': item.product_id,
-                            'variant_id': prev_variant_id,
-                            'batch_infos': {'id': prev_batch_id} if prev_batch_id else None,
-                            'serialno_infos': [{'name': sn} for sn in added_sns],
+                            'variant_id': curr_variant_id,
+                            'batch_infos': item.batch_infos.model_dump(mode="json") if item.batch_infos else ({'id': curr_batch_id} if curr_batch_id else None),
+                            'serialno_infos': added_sn_infos,
                             'storage_location': item.storage_location_infos.name if item.storage_location_infos else None,
                             'reorder_point': item.reorder_point_infos.reorder_point if item.reorder_point_infos else None,
                             'gst': item_gst,
                             'buy_price': buy_price_val,
                             'sell_price': sell_price_val,
-                            'stocks': 0.0,
+                            'stocks': stock_diff,
                             'type': 'INCREMENT',
                             "entity_name": 'PURCHASE',
                             'create_stock_mov_adj': True
                         })
-                    if removed_sns:
+                    # Existing item stock DECREMENT
+                    elif stock_diff < 0:
+                        rem_sn_infos = []
+                        if has_variant and prev_variant_id:
+                            variants = prod_doc.get("variants") or {}
+                            variant_data = {}
+                            if isinstance(variants, dict):
+                                variant_data = variants.get(prev_variant_id) or {}
+                            elif isinstance(variants, list):
+                                for v in variants:
+                                    if v.get("id") == prev_variant_id:
+                                        variant_data = v
+                                        break
+                            if has_batch and prev_batch_id:
+                                batches_list = variant_data.get("batch_infos") or []
+                                batch_data = {}
+                                for b in batches_list:
+                                    if b.get("id") == prev_batch_id or b.get("name") == prev_batch_id:
+                                        batch_data = b
+                                        break
+                                cur_prod_sns = batch_data.get("serialno_infos") or []
+                            else:
+                                cur_prod_sns = variant_data.get("serialno_infos") or []
+                        elif has_batch and prev_batch_id:
+                            batches_list = prod_doc.get("batch_infos") or []
+                            batch_data = {}
+                            for b in batches_list:
+                                if b.get("id") == prev_batch_id or b.get("name") == prev_batch_id:
+                                    batch_data = b
+                                    break
+                            cur_prod_sns = batch_data.get("serialno_infos") or []
+                        else:
+                            cur_prod_sns = prod_doc.get("serialno_infos") or []
+                        cur_sn_map = {sn.get("name"): sn.get("id") for sn in cur_prod_sns if isinstance(sn, dict) and sn.get("name")}
+                        for sn_name in removed_names:
+                            prev_sn_obj = prev_sn_dict.get(sn_name) or {}
+                            sn_id = prev_sn_obj.get("id") or cur_sn_map.get(sn_name)
+                            if sn_id:
+                                rem_sn_infos.append({"id": sn_id, "name": sn_name})
+                            else:
+                                rem_sn_infos.append({"name": sn_name})
+
                         inventory_toupdate.append({
                             'shop_id': data.shop_id,
                             'product_id': item.product_id,
-                            'variant_id': prev_variant_id,
-                            'batch_infos': {'id': prev_batch_id} if prev_batch_id else None,
-                            'serialno_infos': [{'name': sn} for sn in removed_sns],
+                            'variant_id': db_item.variant_id if db_item else prev_variant_id,
+                            'batch_infos': {'id': db_item.batch_id} if (db_item and db_item.batch_id) else ({'id': prev_batch_id} if prev_batch_id else None),
+                            'serialno_infos': rem_sn_infos,
                             'storage_location': item.storage_location_infos.name if item.storage_location_infos else None,
                             'reorder_point': item.reorder_point_infos.reorder_point if item.reorder_point_infos else None,
                             'gst': item_gst,
                             'buy_price': buy_price_val,
                             'sell_price': sell_price_val,
-                            'stocks': 0.0,
+                            'stocks': abs(stock_diff),
                             'type': 'DECREMENT',
                             "entity_name": 'PURCHASE',
                             'create_stock_mov_adj': True
                         })
+                    # If stock quantity is unchanged, but serial numbers were swapped/replaced:
+                    else:
+                        if added_sn_infos:
+                            inventory_toupdate.append({
+                                'shop_id': data.shop_id,
+                                'product_id': item.product_id,
+                                'variant_id': curr_variant_id,
+                                'batch_infos': item.batch_infos.model_dump(mode="json") if item.batch_infos else ({'id': curr_batch_id} if curr_batch_id else None),
+                                'serialno_infos': added_sn_infos,
+                                'storage_location': item.storage_location_infos.name if item.storage_location_infos else None,
+                                'reorder_point': item.reorder_point_infos.reorder_point if item.reorder_point_infos else None,
+                                'gst': item_gst,
+                                'buy_price': buy_price_val,
+                                'sell_price': sell_price_val,
+                                'stocks': 0.0,
+                                'type': 'INCREMENT',
+                                "entity_name": 'PURCHASE',
+                                'create_stock_mov_adj': True
+                            })
+                        if removed_names:
+                            rem_swapped_infos = []
+                            for sn_name in removed_names:
+                                prev_sn_obj = prev_sn_dict.get(sn_name) or {}
+                                sn_id = prev_sn_obj.get("id")
+                                if sn_id:
+                                    rem_swapped_infos.append({"id": sn_id, "name": sn_name})
+                                else:
+                                    rem_swapped_infos.append({"name": sn_name})
+                            inventory_toupdate.append({
+                                'shop_id': data.shop_id,
+                                'product_id': item.product_id,
+                                'variant_id': db_item.variant_id if db_item else prev_variant_id,
+                                'batch_infos': {'id': db_item.batch_id} if (db_item and db_item.batch_id) else ({'id': prev_batch_id} if prev_batch_id else None),
+                                'serialno_infos': rem_swapped_infos,
+                                'storage_location': item.storage_location_infos.name if item.storage_location_infos else None,
+                                'reorder_point': item.reorder_point_infos.reorder_point if item.reorder_point_infos else None,
+                                'gst': item_gst,
+                                'buy_price': buy_price_val,
+                                'sell_price': sell_price_val,
+                                'stocks': 0.0,
+                                'type': 'DECREMENT',
+                                "entity_name": 'PURCHASE',
+                                'create_stock_mov_adj': True
+                            })
 
             tot_pur_cost=buy_price_val * stock_toupdate
             item_infos['total_pur_stocks']+=stock_toupdate
             item_infos['total_pur_cost']+=tot_pur_cost
+            effective_gst_infos = getattr(data, "gst_infos", None) or prev_gst_infos
             gst_type = ""
-            if prev_gst_infos:
-                if isinstance(prev_gst_infos, dict):
-                    gst_type = prev_gst_infos.get('type') or ""
+            if effective_gst_infos:
+                if isinstance(effective_gst_infos, dict):
+                    gst_type = effective_gst_infos.get('type') or ""
                 else:
-                    gst_type = getattr(prev_gst_infos, 'type', '') or ""
+                    gst_type = getattr(effective_gst_infos, 'type', '') or ""
+            if not gst_type:
+                gst_type = "EXCLUSIVE"
 
             if item_gst and item_gst.endswith('%') and gst_type == "EXCLUSIVE":
                 try:
@@ -625,13 +1499,21 @@ class PurchaseService:
                 return 'v2'
         new_version = increment_version(old_version)
 
-        purchase_toadd=UpdatePurchaseDbSchema(
+        effective_supplier_id = data.supplier_id or pur_get_res.supplier_id
+        effective_invoice_no = data.invoice_no or pur_get_res.invoice_no
+        effective_status = data.status or pur_get_res.status
+        effective_date = data.purchase_date or pur_get_res.date
+
+        purchase_toadd = UpdatePurchaseDbSchema(
             id=data.id,
             shop_id=data.shop_id,
-            date=data.purchase_date,
+            supplier_id=effective_supplier_id,
+            invoice_no=effective_invoice_no,
+            status=effective_status,
+            date=effective_date,
             item_infos=item_infos,
             version=new_version,
-            **data.model_dump(mode="json",exclude=['purchase_date','item_infos','id','shop_id'])
+            **data.model_dump(mode="json", exclude=['purchase_date', 'item_infos', 'id', 'shop_id', 'supplier_id', 'invoice_no', 'status'])
         )
 
         pur_add_res=await purchase_repo_obj.update_bulk_purchase(data=[purchase_toadd])
@@ -651,6 +1533,8 @@ class PurchaseService:
                 )
                 ic(cust_obj)
                 
+            if items_todelete_ids:
+                await purchase_repo_obj.delete_bulk_items(items_todelete_ids)
             if items_toadd:
                 await purchase_repo_obj.create_bulk_items(data=items_toadd)
             await purchase_repo_obj.update_bulk_item(data=items_toupdate)
@@ -714,37 +1598,56 @@ class PurchaseService:
                     total_gst_amount += gst_rate * total_amount
                     
                 variant_infos_model = None
-                if db_item.variant_id:
-                    variants_dict = prod_doc.get("variants") or {}
-                    match_var = variants_dict.get(db_item.variant_id)
-                    if match_var:
-                        variant_infos_model = ReadVariantInfos(
-                            id=db_item.variant_id,
-                            name=match_var.get("name") or ""
-                        )
-                    else:
-                        if existing_item.get("variant_infos"):
-                            variant_infos_model = ReadVariantInfos(**existing_item["variant_infos"])
+                resolved_v_id = db_item.variant_id or (existing_item.get("variant_infos", {}).get("id") if existing_item.get("variant_infos") else None)
+                if resolved_v_id:
+                    variants_raw = prod_doc.get("variants") or {}
+                    match_var_name = ""
+                    if isinstance(variants_raw, dict):
+                        match_var = variants_raw.get(resolved_v_id) or {}
+                        match_var_name = match_var.get("name") or ""
+                    elif isinstance(variants_raw, list):
+                        for v in variants_raw:
+                            if v.get("id") == resolved_v_id:
+                                match_var_name = v.get("name") or ""
+                                break
+                    if not match_var_name and existing_item.get("variant_infos"):
+                        match_var_name = existing_item["variant_infos"].get("name") or ""
+                    variant_infos_model = ReadVariantInfos(
+                        id=resolved_v_id,
+                        name=match_var_name or "Variant"
+                    )
                     
                 batch_infos_model = None
-                if db_item.batch_id:
-                    batches_list = prod_doc.get("batch_infos") or []
+                resolved_b_id = db_item.batch_id or (existing_item.get("batch_infos", {}).get("id") if existing_item.get("batch_infos") else None)
+                if resolved_b_id or existing_item.get("batch_infos"):
+                    batches_list = []
+                    if resolved_v_id:
+                        variants_raw = prod_doc.get("variants") or {}
+                        variant_data = {}
+                        if isinstance(variants_raw, dict):
+                            variant_data = variants_raw.get(resolved_v_id) or {}
+                        elif isinstance(variants_raw, list):
+                            for v in variants_raw:
+                                if v.get("id") == resolved_v_id:
+                                    variant_data = v
+                                    break
+                        batches_list = variant_data.get("batch_infos") or []
+                    else:
+                        batches_list = prod_doc.get("batch_infos") or []
                     match_batch = None
                     for b in batches_list:
-                        if b.get("id") == db_item.batch_id:
+                        if b.get("id") == resolved_b_id or b.get("name") == resolved_b_id:
                             match_batch = b
                             break
                     if match_batch:
-                        exp_infos = match_batch.get("expiration_infos") or {}
                         batch_infos_model = ReadBatchInfos(
-                            id=db_item.batch_id,
+                            id=match_batch.get("id") or resolved_b_id or "",
                             name=match_batch.get("name") or "",
-                            mfg_date=match_batch.get("manufacturing_date") or match_batch.get("mfg_date"),
-                            exp_date=match_batch.get("expiry_date") or match_batch.get("exp_date")
+                            mfg_date=str(match_batch.get("manufacturing_date") or match_batch.get("mfg_date") or ""),
+                            exp_date=str(match_batch.get("expiry_date") or match_batch.get("exp_date") or "")
                         )
-                    else:
-                        if existing_item.get("batch_infos"):
-                            batch_infos_model = ReadBatchInfos(**existing_item["batch_infos"])
+                    elif existing_item.get("batch_infos"):
+                        batch_infos_model = ReadBatchInfos(**existing_item["batch_infos"])
                     
                 stock_infos_model = ReadStocksInfos(
                     stocks=stocks,
@@ -793,11 +1696,9 @@ class PurchaseService:
             
             final_total_cost = float(total_pur_cost + total_gst_amount)
             charges_infos = data.charges_infos.model_dump(mode="json") if data.charges_infos else (existing_read_doc.get("charges_infos") if existing_read_doc else {})
-            transport_charge = float(charges_infos.get("transport_charge", 0.0)) if charges_infos else 0.0
-            other_charge = float(charges_infos.get("other_charge", 0.0)) if charges_infos else 0.0
-            total_purchase_cost = final_total_cost + transport_charge + other_charge
+            total_purchase_cost = final_total_cost
             
-            if total_amount_paid > total_purchase_cost:
+            if round(total_amount_paid, 2) > round(total_purchase_cost, 2):
                 from fastapi import HTTPException
                 from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
                 raise HTTPException(
@@ -805,12 +1706,12 @@ class PurchaseService:
                     detail=ErrorResponseTypDict(
                         msg="Error : Updating Purchase",
                         status_code=400,
-                        description="Enter the proper amount and also it should not be goes to minus also",
+                        description=f"Paid amount ({total_amount_paid}) cannot exceed total purchase cost ({total_purchase_cost}).",
                         success=False
                     )
                 )
                 
-            outstanding_amount = abs(final_total_cost - total_amount_paid)
+            outstanding_amount = max(0.0, round(total_purchase_cost - total_amount_paid, 2))
             
             if outstanding_amount == 0:
                 outstanding_status = "COMPLETED"
@@ -820,9 +1721,13 @@ class PurchaseService:
                 outstanding_status = "PARTIALY-PAID"
                 
             supplier_id = fresh_pur.supplier_id
-            supplier_name = "Supplier"
-            if existing_read_doc and existing_read_doc.get("supplier"):
-                supplier_name = existing_read_doc["supplier"].get("supplier_name", "Supplier")
+            old_supplier_id = original_supplier_id
+            old_supplier_name = original_supplier_name
+
+            if old_supplier_id and supplier_id == old_supplier_id and old_supplier_name and old_supplier_name != "Supplier":
+                supplier_name = old_supplier_name
+            else:
+                supplier_name = await get_supplier_name(fresh_pur.shop_id, supplier_id)
                 
             supplier_info = SupplierInfo(supplier_id=supplier_id, supplier_name=supplier_name)
             
@@ -872,11 +1777,78 @@ class PurchaseService:
                 from messaging.main import RabbitMQMessagingConfig
                 rabbitmq_msg_obj = RabbitMQMessagingConfig()
                 
-                # Publish supplier outstanding update
-                old_outstanding = float(existing_read_doc.get("outstanding_amount", 0.0)) if existing_read_doc else 0.0
+                old_supplier_id = original_supplier_id
+                old_outstanding = original_outstanding
                 new_outstanding = outstanding_amount
-                
-                if new_outstanding != old_outstanding:
+
+                # Handle Supplier Transfer if Supplier ID Changed
+                if old_supplier_id and supplier_id and old_supplier_id != supplier_id:
+                    # 1. Reverse/remove outstanding from previous supplier
+                    if old_outstanding > 0:
+                        try:
+                            old_supplier_payload = {
+                                "id": old_supplier_id,
+                                "shop_id": fresh_pur.shop_id,
+                                "outstanding_infos": {
+                                    "amount": float(old_outstanding)
+                                },
+                                "type": "DECREMENT",
+                                "entity_name": "purchase",
+                                "entity_id": fresh_pur.id,
+                                "notes": "transferred outstanding to new supplier"
+                            }
+                            await rabbitmq_msg_obj.publish_event(
+                                routing_key="suppliers.service.routing.key",
+                                exchange_name="suppliers.service.exchange",
+                                payload=old_supplier_payload,
+                                headers={
+                                    "entity_name": "update_supllier_outstanding",
+                                    "service_name": "SUPPLIERS",
+                                    "saga_id": "none",
+                                    "reply_key": "none",
+                                    "reply_exchange": "none",
+                                    "reply_entity_name": "none",
+                                    "body": old_supplier_payload
+                                }
+                            )
+                        except Exception as e:
+                            ic(f"Failed to publish old supplier outstanding decrement: {e}")
+
+                    # 2. Add full new outstanding to new supplier
+                    if new_outstanding > 0:
+                        try:
+                            new_supplier_payload = {
+                                "id": supplier_id,
+                                "shop_id": fresh_pur.shop_id,
+                                "outstanding_infos": {
+                                    "amount": float(new_outstanding)
+                                },
+                                "type": "INCREMENT"
+                            }
+                            await rabbitmq_msg_obj.publish_event(
+                                routing_key="suppliers.service.routing.key",
+                                exchange_name="suppliers.service.exchange",
+                                payload=new_supplier_payload,
+                                headers={
+                                    "entity_name": "update_supllier_outstanding",
+                                    "service_name": "SUPPLIERS",
+                                    "saga_id": "none",
+                                    "reply_key": "none",
+                                    "reply_exchange": "none",
+                                    "reply_entity_name": "none",
+                                    "body": new_supplier_payload
+                                }
+                            )
+                        except Exception as e:
+                            ic(f"Failed to publish new supplier outstanding increment: {e}")
+
+                    # Recalculate supplier stats for both old and new supplier
+                    import asyncio
+                    from infras.read_db.repos.purchase_repo import SupplierStatsReadDbRepo
+                    asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(fresh_pur.shop_id, old_supplier_id))
+                    asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(fresh_pur.shop_id, supplier_id))
+
+                elif new_outstanding != old_outstanding:
                     diff_amount = abs(new_outstanding - old_outstanding)
                     update_type = "INCREMENT" if new_outstanding > old_outstanding else "DECREMENT"
                     
@@ -1010,7 +1982,7 @@ class PurchaseService:
                     "reply_service_name":"None",
                     "service_name":service_name,
                     "entity_name":entity_name,
-                    "body":inventory_toupdate
+                    "body":json.dumps(inventory_toupdate)
 
                 }
             )

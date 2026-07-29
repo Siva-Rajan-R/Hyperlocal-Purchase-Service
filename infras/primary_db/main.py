@@ -20,6 +20,21 @@ async def init_inventory_pg_db():
             # await conn.run_sync(BASE.metadata.drop_all)
             await conn.run_sync(BASE.metadata.create_all)
             await conn.execute(text("ALTER TABLE purchase ADD COLUMN IF NOT EXISTS version VARCHAR DEFAULT 'v1';"))
+            await conn.execute(text("ALTER TABLE purchase ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'COMPLETED';"))
+            await conn.execute(text("ALTER TABLE purchase_items DROP COLUMN IF EXISTS serialno_id;"))
+            await conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='purchase_items' AND column_name='serial_numbers' AND data_type != 'ARRAY'
+                    ) THEN
+                        ALTER TABLE purchase_items ALTER COLUMN serial_numbers TYPE jsonb[] USING serial_numbers::jsonb[];
+                    END IF;
+                EXCEPTION WHEN OTHERS THEN
+                    NULL;
+                END $$;
+            """))
             await conn.commit()
         ic("...Databse initialized successfully...")
     except Exception as e:
