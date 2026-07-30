@@ -47,6 +47,12 @@ class Purchase(BASE):
         cascade="all, delete-orphan"
     )
 
+    returns = relationship(
+        "PurchaseReturns",
+        back_populates="purchase",
+        cascade="all, delete-orphan"
+    )
+
 
 class PurchaseItems(BASE):
     __tablename__ = "purchase_items"
@@ -102,6 +108,12 @@ class PurchaseItems(BASE):
 
     reorder_point = relationship(
         "PurchaseItemsReorderPoint",
+        back_populates="purchase_item",
+        cascade="all, delete-orphan"
+    )
+
+    return_items = relationship(
+        "PurchaseReturnItems",
         back_populates="purchase_item",
         cascade="all, delete-orphan"
     )
@@ -232,3 +244,59 @@ class PurchaseHistory(BASE):
     version = Column(String, nullable=False)
     purchase_data = Column(JSONB, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+
+class PurchaseReturns(BASE):
+    __tablename__ = "purchase_returns"
+    id = Column(String, primary_key=True)
+    ui_id = Column(String, nullable=False, index=True)
+    sequence_id = Column(BigInteger, Identity(always=True), nullable=False)
+    purchase_id = Column(String, ForeignKey("purchase.id", ondelete="CASCADE"), nullable=False)
+    shop_id = Column(String, nullable=False)
+    supplier_id = Column(String, nullable=True)
+
+    total_refund_amount = Column(Float, nullable=False, default=0.0)
+    total_refund_qty = Column(Float, nullable=False, default=0.0)
+    payment_infos = Column(JSONB, nullable=False)
+    status = Column(String, nullable=False)
+
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    purchase = relationship(
+        "Purchase",
+        back_populates="returns"
+    )
+
+    items = relationship(
+        "PurchaseReturnItems",
+        back_populates="return_purchase",
+        cascade="all, delete-orphan"
+    )
+
+
+class PurchaseReturnItems(BASE):
+    __tablename__ = "purchase_return_items"
+    id = Column(String, primary_key=True)
+    return_id = Column(String, ForeignKey("purchase_returns.id", ondelete="CASCADE"), nullable=False, index=True)
+    purchase_item_id = Column(String, ForeignKey("purchase_items.id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(String, nullable=False)
+
+    quantity = Column(Float, nullable=False)
+    entered_qty = Column(Float, nullable=True)
+    entered_unit = Column(String, nullable=True)
+    refund_amount = Column(Float, nullable=False, default=0.0)
+    reason = Column(String, nullable=True)
+
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    return_purchase = relationship(
+        "PurchaseReturns",
+        back_populates="items"
+    )
+
+    purchase_item = relationship(
+        "PurchaseItems",
+        back_populates="return_items"
+    )

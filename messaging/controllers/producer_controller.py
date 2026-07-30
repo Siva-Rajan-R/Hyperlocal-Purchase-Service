@@ -18,10 +18,12 @@ from hyperlocal_platform.core.utils.routingkey_builder import generate_routingke
 from typing import Optional
 from hyperlocal_platform.core.basemodels.readdb_model import ReadDbBaseModel
 from ..msgqueue_producers.purchase_msgqueue_producer import MessagingQueuePurchasegproducer
+from ..msgqueue_producers.purchase_return_msgqueue_producer import MessagingQueuePurchaseReturnProducer
 
 
 MESSAGING_QUEUE_PRODUCER_MAPPER_BY_SERVICE_NAME={
-    "PURCHASE": MessagingQueuePurchasegproducer
+    "PURCHASE": MessagingQueuePurchasegproducer,
+    "PURCHASES_RETURN": MessagingQueuePurchaseReturnProducer
 }
 
 SERVICE_NAME="PURCHASE".upper()

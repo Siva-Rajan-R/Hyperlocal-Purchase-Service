@@ -12,6 +12,7 @@ async def worker():
     exchanges=[
         {'name':'purchase.service.exchange','exc_type':ExchangeType.DIRECT},
         {'name':'purchase.producer.exchange','exc_type':ExchangeType.DIRECT},
+        {'name':'purchases.producer.exchange','exc_type':ExchangeType.DIRECT},
         {'name':'hyperlocal_domain_events','exc_type':ExchangeType.DIRECT}
     ]
 
@@ -22,6 +23,7 @@ async def worker():
     queues=[
         {'exc_name':'purchase.service.exchange','q_name':'purchase.service.queue','r_key':'purchase.service.routing.key'},
         {'exc_name':'purchase.producer.exchange','q_name':'purchase.producer.queue','r_key':'purchase.producer.routing.key'},
+        {'exc_name':'purchases.producer.exchange','q_name':'purchase.producer.queue','r_key':'purchases.producer.routing.key'},
         {'exc_name':'hyperlocal_domain_events','q_name':'supplier_service_shopconfig_q','r_key':'hyperlocal.shopconfig.updated'}
     ]
 

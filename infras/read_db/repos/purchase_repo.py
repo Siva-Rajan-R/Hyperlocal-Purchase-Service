@@ -139,7 +139,7 @@ class PurchaseReadDbRepo:
     ) -> Optional[dict]:
         query = {
             "shop_id": data.shop_id,
-            "purchase_id": data.id,
+            "$or": [{"purchase_id": data.id}, {"id": data.id}]
         }
 
         return await PURCHAESE_COLLECTION.find_one(

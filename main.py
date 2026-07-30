@@ -55,6 +55,10 @@ app=FastAPI(
 
 
 
+from api.routers.v1 import purchase_route, customfield_router, return_routes
+
 # Routes to include
 app.include_router(purchase_route.router)
 app.include_router(customfield_router.router)
+app.include_router(return_routes.router)
+
