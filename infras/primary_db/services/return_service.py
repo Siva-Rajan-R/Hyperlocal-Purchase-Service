@@ -28,6 +28,8 @@ class ReturnService:
             )
             if not read_db_purchase:
                 raise HTTPException(status_code=404, detail="Purchase not found")
+            if read_db_purchase.get("status") == "CANCELED":
+                raise HTTPException(status_code=400, detail="Cannot process purchase return for a canceled purchase")
 
             ui_id_res = await get_ui_id(shop_id=data.shop_id)
             if ui_id_res and isinstance(ui_id_res, dict) and ui_id_res.get('prefix'):

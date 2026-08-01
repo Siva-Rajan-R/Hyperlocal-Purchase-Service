@@ -3,7 +3,7 @@ from ...handlers.purchase_handler import HandlePurchaseRequest
 from fastapi import APIRouter,Query,Depends
 from infras.primary_db.main import AsyncSession,get_pg_async_session
 from typing import Optional,Annotated,List
-from schemas.v1.purchase_schemas.request_schema import CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema
+from schemas.v1.purchase_schemas.request_schema import CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema,CancelPurchaseSchema
 from core.data_formats.enums.purchase_enums import PurchaseTypeEnums,PurchaseViewsEnums
 
 
@@ -28,10 +28,17 @@ async def update(data:UpdatePurchaseSchema,session:ASYNC_PG_SESSION,user_id: Opt
     return await HandlePurchaseRequest(session=session).update(data=data,user_id=user_id or "")
 
 
+@router.post("/cancel")
+async def cancel(data: CancelPurchaseSchema, session: ASYNC_PG_SESSION, user_id: Optional[str] = Depends(get_current_user_id)):
+    return await HandlePurchaseRequest(session=session).cancel(data=data, executing_user_id=user_id or "")
+
+
+
 
 @router.delete("/{shop_id}/{id}")
 async def delete(session:ASYNC_PG_SESSION,data:DeletePurchaseSchema=Depends()):
     return await HandlePurchaseRequest(session=session).delete(data=data)
+
 
 
 @router.get("")

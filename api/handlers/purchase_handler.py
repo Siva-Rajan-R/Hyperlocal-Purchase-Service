@@ -8,7 +8,7 @@ from icecream import ic
 from fastapi.exceptions import HTTPException
 from core.utils.validate_fields import convert_field_type,validate_fields
 from infras.caching.models.purchase_model import PurchaseProductCacheModel,PurchaseProductCachingSchema,PurchaseSupplierCacheModel,PurchaseSupplierCachingSchema
-from schemas.v1.purchase_schemas.request_schema import CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema
+from schemas.v1.purchase_schemas.request_schema import CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema,CancelPurchaseSchema
 from messaging.saga_producer import SagaProducer,CreateSagaStateSchema,SagaStatusEnum,SagaStateExecutionTypDict
 from hyperlocal_platform.core.enums.saga_state_enum import SagaStepsValueEnum
 from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
@@ -188,6 +188,29 @@ class HandlePurchaseRequest:
                 success=False
             )
         )
+
+    async def cancel(self, data: CancelPurchaseSchema, executing_user_id: Optional[str] = None):
+        res = await self.purchase_service_obj.cancel(data=data, executing_user_id=executing_user_id)
+        if res:
+            return SuccessResponseTypDict(
+                detail=BaseResponseTypDict(
+                    msg="Purchase canceled successfully",
+                    status_code=200,
+                    success=True
+                ),
+                data=res if isinstance(res, dict) else {}
+            )
+        
+        raise HTTPException(
+            status_code=400,
+            detail=ErrorResponseTypDict(
+                msg="Error : Canceling Purchase",
+                status_code=400,
+                description="Unable to cancel purchase",
+                success=False
+            )
+        )
+
     
 
     async def get_purchases(self,data:GetAllPurchaseSchemas):

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hyperlocal_platform.core.enums.timezone_enum import TimeZoneEnum
 from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
 from schemas.v1.purchase_schemas.db_schemas import CreatePurchaseDbSchema,CreatePurchaseItemsDbSchema,CreatePurchasePricingDbSchema,CreateStorageLocationDbSchema,UpdatePurchaseDbSchema,UpdatePurchaseItemsDbSchema,UpdatePurchasePricingDbSchema,UpdateStorageLocationDbSchema,DeletePurchaseDbSchema,UpdateReorderPointDbSchema
-from schemas.v1.purchase_schemas.request_schema import CreatePurchaseItemsSchema,CreatePurchasePricingSchema,CreatePurchaseSchema,CreateStorageLocationSchema,UpdatePurchaseItemsSchema,UpdatePurchasePricingSchema,UpdatePurchaseSchema,UpdateStorageLocationSchema,DeletePurchaseSchema,PurchaseItemInfos,GetPurchaseByIdSchema,GetAllPurchaseSchemas,GetPurchaseByShopIdSchema
+from schemas.v1.purchase_schemas.request_schema import CreatePurchaseItemsSchema,CreatePurchasePricingSchema,CreatePurchaseSchema,CreateStorageLocationSchema,UpdatePurchaseItemsSchema,UpdatePurchasePricingSchema,UpdatePurchaseSchema,UpdateStorageLocationSchema,DeletePurchaseSchema,PurchaseItemInfos,GetPurchaseByIdSchema,GetAllPurchaseSchemas,GetPurchaseByShopIdSchema,CancelPurchaseSchema
 from core.errors.messaging_errors import BussinessError,FatalError,RetryableError
 from hyperlocal_platform.core.decorators.db_session_handler_dec import start_db_transaction
 from core.data_formats.enums.purchase_enums import PurchaseTypeEnums,PurchaseViewsEnums
@@ -514,6 +514,20 @@ class PurchaseService:
         original_supplier_id = pur_get_res.supplier_id
         existing_read_doc_initial = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=data.id, shop_id=data.shop_id))
         existing_read_doc = existing_read_doc_initial
+
+        current_status = getattr(pur_get_res, 'status', None) or (existing_read_doc_initial.get("status") if existing_read_doc_initial else None)
+        if current_status and str(current_status).upper() == "CANCELED":
+            from fastapi import HTTPException
+            from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+            raise HTTPException(
+                status_code=400,
+                detail=ErrorResponseTypDict(
+                    msg="Error : Updating Purchase",
+                    status_code=400,
+                    description="Cannot edit or update a purchase that has been canceled.",
+                    success=False
+                )
+            )
         original_outstanding = float(existing_read_doc_initial.get("outstanding_amount", 0.0)) if existing_read_doc_initial else 0.0
         original_supplier_name = existing_read_doc_initial.get("supplier", {}).get("supplier_name") if existing_read_doc_initial else None
 
@@ -1869,6 +1883,7 @@ class PurchaseService:
                             supplier_payload.update({
                                 "entity_name": "purchase",
                                 "entity_id": fresh_pur.id,
+                                "invoice_no": getattr(fresh_pur, "invoice_no", None),
                                 "payment_method": str(pay_method),
                                 "notes": last_payment.get("notes") or f"cleared outstanding for the purchase"
                             })
@@ -2076,6 +2091,427 @@ class PurchaseService:
     
     async def get_history(self, purchase_id: str):
         return await self.purchase_repo_obj.get_history_by_purchase_id(purchase_id=purchase_id)
+
+    async def cancel(self, data: CancelPurchaseSchema, executing_user_id: Optional[str] = None) -> dict:
+        from sqlalchemy import update
+        from fastapi import HTTPException
+        from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+        from infras.read_db.main import PURCHAESE_COLLECTION, MONGO_CLIENT
+        import asyncio
+        from infras.read_db.repos.purchase_repo import SupplierStatsReadDbRepo, PurchaseStatsReadDbRepo
+
+        shop_id = data.shop_id
+        purchase_id = data.id
+
+        pur_db_res = await self.purchase_repo_obj.get_purchase_by_id(GetPurchaseByIdSchema(id=purchase_id, shop_id=shop_id))
+        read_doc = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=purchase_id, shop_id=shop_id))
+
+        if not pur_db_res and not read_doc:
+            raise HTTPException(
+                status_code=404,
+                detail=ErrorResponseTypDict(
+                    msg="Error : Canceling Purchase",
+                    status_code=404,
+                    description=f"Purchase with ID '{purchase_id}' not found.",
+                    success=False
+                )
+            )
+
+        current_status = getattr(pur_db_res, 'status', None) or (read_doc.get("status") if read_doc else None)
+        if current_status and str(current_status).upper() == "CANCELED":
+            raise HTTPException(
+                status_code=400,
+                detail=ErrorResponseTypDict(
+                    msg="Error : Canceling Purchase",
+                    status_code=400,
+                    description="Purchase is already canceled.",
+                    success=False
+                )
+            )
+
+        # Check if purchase has any existing returns
+        from sqlalchemy import select, func
+        from infras.primary_db.models.purchase_model import PurchaseReturns
+
+        stmt_ret = select(func.count(PurchaseReturns.id)).where(PurchaseReturns.purchase_id == purchase_id)
+        res_ret = await self.session.execute(stmt_ret)
+        pg_returns_count = res_ret.scalar() or 0
+
+        has_mongo_returns = bool(read_doc and read_doc.get("returns") and len(read_doc.get("returns")) > 0)
+        has_returned_items = False
+        if read_doc and read_doc.get("items"):
+            for itm in read_doc["items"]:
+                if isinstance(itm, dict) and (float(itm.get("returned_quantity") or 0) > 0 or (itm.get("returns") and len(itm.get("returns")) > 0)):
+                    has_returned_items = True
+                    break
+
+        if pg_returns_count > 0 or has_mongo_returns or has_returned_items:
+            raise HTTPException(
+                status_code=400,
+                detail=ErrorResponseTypDict(
+                    msg="Error : Canceling Purchase",
+                    status_code=400,
+                    description="Cannot cancel purchase because it has existing purchase returns.",
+                    success=False
+                )
+            )
+
+
+        invoice_no = getattr(pur_db_res, 'invoice_no', None) or (read_doc.get("invoice_no") if read_doc else purchase_id)
+
+        # Handle DRAFT status
+        if current_status and str(current_status).upper() == "DRAFT":
+            stmt = (
+                update(Purchase)
+                .where(Purchase.id == purchase_id, Purchase.shop_id == shop_id)
+                .values(status="CANCELED")
+            )
+            await self.session.execute(stmt)
+
+            await PURCHAESE_COLLECTION.update_one(
+                {"$or": [{"purchase_id": purchase_id}, {"id": purchase_id}], "shop_id": shop_id},
+                {"$set": {"status": "CANCELED"}}
+            )
+
+            await _send_activity_log(
+                shop_id=shop_id,
+                action="CANCELED",
+                entity_id=purchase_id,
+                description=f"Canceled Draft Purchase {invoice_no} ({purchase_id})",
+                entity_name=str(invoice_no)
+            )
+
+            return {
+                "success": True,
+                "id": purchase_id,
+                "status": "CANCELED",
+                "msg": "Draft purchase canceled successfully"
+            }
+
+        # Handle COMPLETED / active purchase
+        raw_items = pur_db_res.items if (pur_db_res and pur_db_res.items) else (read_doc.get("items") or [])
+        read_items_map = {itm.get("id"): itm for itm in (read_doc.get("items") or []) if isinstance(itm, dict) and itm.get("id")}
+
+        product_ids = set()
+        items_to_process = []
+
+        for item in raw_items:
+            if isinstance(item, dict):
+                p_id = item.get("product_id")
+                item_id = item.get("id")
+                v_id = item.get("variant_id") or (item.get("variant_infos", {}).get("id") if isinstance(item.get("variant_infos"), dict) else None)
+                b_id = item.get("batch_id") or (item.get("batch_infos", {}).get("id") if isinstance(item.get("batch_infos"), dict) else None)
+                stocks_info_dict = item.get("stocks_infos") or item.get("stock_infos") or {}
+                purchased_qty = float(stocks_info_dict.get("stocks") if isinstance(stocks_info_dict, dict) and stocks_info_dict.get("stocks") is not None else (item.get("stocks") or item.get("quantity") or 0.0))
+                serials = item.get("serial_numbers") or item.get("serialno_numbers") or item.get("serialno_infos") or []
+                item_name = item.get("name") or p_id
+                returned_qty = float(item.get("returned_quantity") or 0.0)
+                buy_price = float(item.get("buy_price") or (item.get("pricing_infos", {}).get("buy_price") if isinstance(item.get("pricing_infos"), dict) else 0.0))
+            else:
+                p_id = item.product_id
+                item_id = item.id
+                v_id = item.variant_id
+                b_id = item.batch_id
+                purchased_qty = float(item.stocks or 0.0)
+                serials = item.serial_numbers or []
+                item_name = p_id
+                read_item_doc = read_items_map.get(item_id) or {}
+                returned_qty = float(read_item_doc.get("returned_quantity") or 0.0)
+                if read_item_doc.get("name"):
+                    item_name = read_item_doc.get("name")
+                buy_price = float(item.pricing_infos[0].buy_price if item.pricing_infos else (read_item_doc.get("buy_price") or 0.0))
+
+            if p_id:
+                product_ids.add(p_id)
+                items_to_process.append({
+                    "item_id": item_id,
+                    "product_id": p_id,
+                    "variant_id": v_id,
+                    "batch_id": b_id,
+                    "purchased_qty": purchased_qty,
+                    "returned_qty": returned_qty,
+                    "qty_to_revert": max(0.0, purchased_qty - returned_qty),
+                    "serials": serials,
+                    "name": item_name,
+                    "buy_price": buy_price
+                })
+
+        prod_inv_collection = MONGO_CLIENT["InventoryServiceReadDb"]["ProdInvCollections"]
+        cursor = prod_inv_collection.find({"id": {"$in": list(product_ids)}, "shop_id": shop_id})
+        product_docs = {doc["id"]: doc async for doc in cursor}
+
+        # Check physical stock availability for ALL items before making changes
+        for proc_item in items_to_process:
+            qty_to_revert = proc_item["qty_to_revert"]
+            if qty_to_revert <= 0:
+                continue
+
+            p_id = proc_item["product_id"]
+            v_id = proc_item["variant_id"]
+            b_id = proc_item["batch_id"]
+            item_name = proc_item["name"]
+
+            prod_doc = product_docs.get(p_id) or {}
+            type_infos = prod_doc.get("type_infos") or {}
+            has_batch = type_infos.get("has_batch") if type_infos and "has_batch" in type_infos else prod_doc.get("has_batch", False)
+            has_variant = type_infos.get("has_variant") if type_infos and "has_variant" in type_infos else prod_doc.get("has_variant", False)
+
+            target_stock_infos = {}
+            if has_variant and v_id:
+                variants = prod_doc.get("variants") or {}
+                variant_data = {}
+                if isinstance(variants, dict):
+                    variant_data = variants.get(v_id) or {}
+                elif isinstance(variants, list):
+                    variant_data = next((v for v in variants if isinstance(v, dict) and v.get("id") == v_id), {})
+                
+                if has_batch and b_id:
+                    batches = variant_data.get("batch_infos") or []
+                    matched_b = next((b for b in batches if isinstance(b, dict) and (b.get("id") == b_id or b.get("name") == b_id)), {})
+                    target_stock_infos = matched_b.get("stock_infos") or matched_b.get("stocks_infos") or {}
+                else:
+                    target_stock_infos = variant_data.get("stock_infos") or variant_data.get("stocks_infos") or {}
+            elif has_batch and b_id:
+                batches = prod_doc.get("batch_infos") or []
+                matched_b = next((b for b in batches if isinstance(b, dict) and (b.get("id") == b_id or b.get("name") == b_id)), {})
+                target_stock_infos = matched_b.get("stock_infos") or matched_b.get("stocks_infos") or {}
+            else:
+                target_stock_infos = prod_doc.get("stock_infos") or prod_doc.get("stocks_infos") or {}
+
+            physical_stock = float(target_stock_infos.get("physical_stocks") if target_stock_infos.get("physical_stocks") is not None else (target_stock_infos.get("stocks") or 0.0))
+
+            if physical_stock < qty_to_revert:
+                raise HTTPException(
+                    status_code=400,
+                    detail=ErrorResponseTypDict(
+                        msg="Error : Canceling Purchase",
+                        status_code=400,
+                        description=f"Cannot cancel purchase because current physical stock for product '{item_name}' ({physical_stock}) is less than the purchased stock ({qty_to_revert}) required to revert.",
+                        success=False
+                    )
+                )
+
+        # Revert stocks and process cancellation
+        inventory_toupdate = []
+        for proc_item in items_to_process:
+            qty_to_revert = proc_item["qty_to_revert"]
+            if qty_to_revert <= 0:
+                continue
+
+            p_id = proc_item["product_id"]
+            v_id = proc_item["variant_id"]
+            b_id = proc_item["batch_id"]
+            serials = proc_item["serials"]
+
+            normalized_serials = normalize_serial_numbers(serials)
+
+            inventory_toupdate.append({
+                "shop_id": shop_id,
+                "product_id": p_id,
+                "variant_id": v_id,
+                "batch_infos": {"id": b_id} if b_id else None,
+                "serialno_infos": normalized_serials,
+                "stocks": qty_to_revert,
+                "type": "DECREMENT",
+                "entity_name": "PURCHASE_CANCEL",
+                "create_stock_mov_adj": True
+            })
+
+            # Update local Mongo ProdInvCollections stock directly
+            prod_doc = product_docs.get(p_id)
+            if prod_doc:
+                type_infos = prod_doc.get("type_infos") or {}
+                has_batch = type_infos.get("has_batch") if type_infos and "has_batch" in type_infos else prod_doc.get("has_batch", False)
+                has_variant = type_infos.get("has_variant") if type_infos and "has_variant" in type_infos else prod_doc.get("has_variant", False)
+
+                try:
+                    if has_variant and v_id:
+                        if has_batch and b_id:
+                            await prod_inv_collection.update_one(
+                                {"id": p_id, "shop_id": shop_id},
+                                {"$inc": {"variants.$[v].batch_infos.$[b].stock_infos.physical_stocks": -qty_to_revert}},
+                                array_filters=[{"v.id": v_id}, {"b.id": b_id}]
+                            )
+                        else:
+                            await prod_inv_collection.update_one(
+                                {"id": p_id, "shop_id": shop_id},
+                                {"$inc": {"variants.$[v].stock_infos.physical_stocks": -qty_to_revert}},
+                                array_filters=[{"v.id": v_id}]
+                            )
+                    elif has_batch and b_id:
+                        await prod_inv_collection.update_one(
+                            {"id": p_id, "shop_id": shop_id},
+                            {"$inc": {"batch_infos.$[b].stock_infos.physical_stocks": -qty_to_revert}},
+                            array_filters=[{"b.id": b_id}]
+                        )
+                    else:
+                        await prod_inv_collection.update_one(
+                            {"id": p_id, "shop_id": shop_id},
+                            {"$inc": {"stock_infos.physical_stocks": -qty_to_revert}}
+                        )
+                except Exception as ex:
+                    ic(f"Error updating mongo physical_stocks directly on cancel: {ex}")
+
+        # Update Postgres status
+        supplier_id = (getattr(pur_db_res, 'supplier_id', None) if pur_db_res else None) or (read_doc.get("supplier_id") if read_doc else None) or (read_doc.get("supplier", {}).get("supplier_id") if isinstance(read_doc.get("supplier"), dict) else None)
+        outstanding_amount = float(read_doc.get("outstanding_amount", 0.0)) if read_doc else 0.0
+
+        stmt = (
+            update(Purchase)
+            .where(Purchase.id == purchase_id, Purchase.shop_id == shop_id)
+            .values(status="CANCELED")
+        )
+        await self.session.execute(stmt)
+        await self.session.commit()
+
+        # Update Read DB Mongo status
+        await PURCHAESE_COLLECTION.update_one(
+            {"$or": [{"purchase_id": purchase_id}, {"id": purchase_id}], "shop_id": shop_id},
+            {"$set": {"status": "CANCELED"}}
+        )
+
+        if supplier_id and outstanding_amount > 0:
+            try:
+                from messaging.main import RabbitMQMessagingConfig
+                rabbitmq_msg_obj = RabbitMQMessagingConfig()
+                supplier_payload = {
+                    "id": supplier_id,
+                    "shop_id": shop_id,
+                    "outstanding_infos": {
+                        "amount": float(outstanding_amount)
+                    },
+                    "type": "DECREMENT",
+                    "entity_name": "purchase",
+                    "entity_id": purchase_id,
+                    "invoice_no": invoice_no,
+                    "notes": f"canceled purchase {invoice_no}"
+                }
+                await rabbitmq_msg_obj.publish_event(
+                    routing_key="suppliers.service.routing.key",
+                    exchange_name="suppliers.service.exchange",
+                    payload=supplier_payload,
+                    headers={
+                        "entity_name": "update_supllier_outstanding",
+                        "service_name": "SUPPLIERS",
+                        "saga_id": "none",
+                        "reply_key": "none",
+                        "reply_exchange": "none",
+                        "reply_entity_name": "none",
+                        "body": supplier_payload
+                    }
+                )
+            except Exception as e:
+                ic(f"Failed to publish supplier outstanding decrement on cancel: {e}")
+
+        # Recalculate supplier stats and purchase stats in Mongo
+        if supplier_id:
+            asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(shop_id, supplier_id))
+        asyncio.create_task(PurchaseStatsReadDbRepo.update_stats(shop_id))
+
+        # Send Analytics Reversal Event
+        try:
+            from messaging.main import RabbitMQMessagingConfig
+            rabbitmq_msg_obj = RabbitMQMessagingConfig()
+
+            analytics_datas = []
+            for i, proc_item in enumerate(items_to_process):
+                qty_reverted = proc_item["qty_to_revert"]
+                b_price = proc_item["buy_price"]
+                item_amount = qty_reverted * b_price
+                item_outstanding_delta = outstanding_amount if i == 0 else 0.0
+
+                analytics_datas.append({
+                    "purchase_id": purchase_id,
+                    "supplier_id": supplier_id,
+                    "product_id": proc_item["product_id"],
+                    "variant_id": proc_item["variant_id"],
+                    "batch_id": proc_item["batch_id"],
+                    "stocks": -qty_reverted,
+                    "purchase_amounts": -item_amount,
+                    "outstanding_amounts": -item_outstanding_delta
+                })
+
+            analytics_payload = {
+                "shop_id": shop_id,
+                "total_purchase": -1,
+                "datas": analytics_datas
+            }
+
+            await rabbitmq_msg_obj.publish_event(
+                routing_key="analytics.service.routing.key",
+                exchange_name="analytics.service.exchange",
+                payload=analytics_payload,
+                headers={
+                    "entity_name": "purchase_event",
+                    "service_name": "ANALYTICS",
+                    "saga_id": "none",
+                    "reply_key": "none",
+                    "reply_exchange": "none",
+                    "reply_entity_name": "none",
+                    "body": analytics_payload
+                }
+            )
+        except Exception as e:
+            ic(f"Failed to publish analytics cancel event: {e}")
+
+        # Emit Saga for product inventory update
+        if inventory_toupdate:
+            routing_key = "products.service.routing.key"
+            exchange_name = "products.service.exchange"
+            entity_name = "update_bulk_prodinv"
+            service_name = "PRODUCTS"
+
+            saga_id: str = generate_uuid()
+            steps = {
+                "PRODUCT_VERIFY_UPDATE": SagaStepsValueEnum.PENDING
+            }
+
+            saga_data = {"purchase": {"id": purchase_id, "shop_id": shop_id, "status": "CANCELED"}}
+            try:
+                await SagaProducer.emit(
+                    saga_payload=CreateSagaStateSchema(
+                        id=saga_id,
+                        status=SagaStatusEnum.IN_PROGRESS,
+                        type="PURCHASE_CANCELED",
+                        steps=steps,
+                        execution=SagaStateExecutionTypDict(
+                            step="PRODUCT_VERIFY_UPDATE",
+                            service=service_name
+                        ),
+                        data=saga_data
+                    ),
+                    routing_key=routing_key,
+                    exchange_name=exchange_name,
+                    headers={
+                        "reply_key": "None",
+                        "reply_exchange": "None",
+                        "reply_entity_name": "None",
+                        "reply_service_name": "None",
+                        "service_name": service_name,
+                        "entity_name": entity_name,
+                        "body": json.dumps(inventory_toupdate)
+                    }
+                )
+            except Exception as e:
+                ic(f"Failed to emit PURCHASE_CANCELED saga: {e}")
+
+        # Send Activity Log
+        await _send_activity_log(
+            shop_id=shop_id,
+            action="CANCELED",
+            entity_id=purchase_id,
+            description=f"Canceled Purchase {invoice_no} ({purchase_id})",
+            entity_name=str(invoice_no)
+        )
+
+        return {
+            "success": True,
+            "id": purchase_id,
+            "status": "CANCELED",
+            "msg": "Purchase canceled successfully"
+        }
+
+
     
                     
             

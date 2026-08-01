@@ -29,3 +29,5 @@ class PurchaseViewsEnums(str,Enum):
 class PurchaseStatusEnums(str,Enum):
     DRAFT="DRAFT"
     COMPLETED="COMPLETED"
+    CANCELED="CANCELED"
+

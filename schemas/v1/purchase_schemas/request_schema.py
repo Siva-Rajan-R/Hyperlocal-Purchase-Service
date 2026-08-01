@@ -122,6 +122,12 @@ class DeletePurchaseSchema(BaseModel):
     shop_id: str
 
 
+class CancelPurchaseSchema(BaseModel):
+    id: str
+    shop_id: str
+
+
+
 
 class GetAllPurchaseSchemas(BaseModel):
     limit: int = 10

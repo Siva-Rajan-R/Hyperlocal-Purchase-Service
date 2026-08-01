@@ -602,12 +602,29 @@ class MessagingQueuePurchasegproducer:
 
                     await PurchaseReadDbRepo.add_updatereaddb(purchase_read_model)
 
-                    if outstanding_status != "COMPLETED":
+                    if purchase_data.get("supplier_id"):
+                        payment_method_str = "N/A"
+                        if payment_infos:
+                            last_pay = payment_infos[0]
+                            payment_method_str = last_pay.get("mode") or last_pay.get("method") or "N/A"
+                            if hasattr(payment_method_str, "value"):
+                                payment_method_str = payment_method_str.value
+
+                        invoice_ref = purchase_data.get('invoice_no') or ui_id
+                        notes_str = f"Initial payment of {total_amount_paid} for purchase {invoice_ref}" if total_amount_paid > 0 else f"Purchase {invoice_ref} created"
+
                         supplier_payload = {
                             "shop_id": purchase_data.get('shop_id'),
                             "id": purchase_data.get("supplier_id"),
-                            "outstanding_infos": {"amount": outstanding_amount},
-                            "type": "INCREMENT"
+                            "outstanding_infos": {"amount": float(outstanding_amount)},
+                            "type": "INCREMENT",
+                            "entity_name": "purchase",
+                            "entity_id": str(purchase_id),
+                            "invoice_no": str(invoice_no or ""),
+                            "payment_method": str(payment_method_str),
+                            "cleared_amount": float(total_amount_paid),
+                            "outstanding_amount": float(outstanding_amount),
+                            "notes": notes_str
                         }
                         await rabbitmq_msg_obj.publish_event(
                             routing_key="suppliers.service.routing.key",
