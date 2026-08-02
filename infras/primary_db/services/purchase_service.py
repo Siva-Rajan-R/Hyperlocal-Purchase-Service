@@ -30,51 +30,46 @@ from integrations.utility_service import get_ui_id
 def normalize_serial_numbers(serials):
     if not serials:
         return []
+    import uuid, json
     result = []
     for item in serials:
         if isinstance(item, str):
-            import json
             try:
                 parsed = json.loads(item)
                 if isinstance(parsed, dict):
-                    name_val = parsed.get("name") or parsed.get("serial_no") or parsed.get("serialno") or ""
-                    res_dict = {"name": name_val}
-                    if parsed.get("id"):
-                        res_dict["id"] = parsed["id"]
-                    result.append(res_dict)
+                    name_val = parsed.get("name") or parsed.get("serialno_name") or parsed.get("serial_no_name") or parsed.get("serial_no") or parsed.get("serialno") or ""
+                    id_val = parsed.get("id") or parsed.get("serialno_id") or parsed.get("serial_no_id") or str(uuid.uuid4())
+                    result.append({"id": str(id_val), "name": str(name_val)})
                     continue
             except Exception:
                 pass
-            result.append({"name": item})
+            result.append({"id": str(uuid.uuid4()), "name": item})
         elif isinstance(item, dict):
-            name_val = item.get("name") or item.get("serial_no") or item.get("serialno") or ""
-            res_dict = {"name": name_val}
-            if item.get("id"):
-                res_dict["id"] = item["id"]
-            result.append(res_dict)
+            name_val = item.get("name") or item.get("serialno_name") or item.get("serial_no_name") or item.get("serial_no") or item.get("serialno") or ""
+            id_val = item.get("id") or item.get("serialno_id") or item.get("serial_no_id") or str(uuid.uuid4())
+            result.append({"id": str(id_val), "name": str(name_val)})
         elif hasattr(item, "name"):
-            res_dict = {"name": getattr(item, "name", "")}
-            if getattr(item, "id", None):
-                res_dict["id"] = getattr(item, "id")
-            result.append(res_dict)
+            name_val = getattr(item, "name", "") or getattr(item, "serialno_name", "") or ""
+            id_val = getattr(item, "id", None) or getattr(item, "serialno_id", None) or str(uuid.uuid4())
+            result.append({"id": str(id_val), "name": str(name_val)})
         else:
-            result.append({"name": str(item)})
+            result.append({"id": str(uuid.uuid4()), "name": str(item)})
     return result
 
 def extract_sn_info(sn):
     if not sn:
         return "", None
     if isinstance(sn, dict):
-        sn_name = sn.get("name") or sn.get("serial_no") or sn.get("serialno") or ""
-        sn_id = sn.get("id")
+        sn_name = sn.get("name") or sn.get("serialno_name") or sn.get("serial_no_name") or sn.get("serial_no") or sn.get("serialno") or ""
+        sn_id = sn.get("id") or sn.get("serialno_id") or sn.get("serial_no_id")
         return sn_name, sn_id
     elif isinstance(sn, str):
         import json
         try:
             parsed = json.loads(sn)
             if isinstance(parsed, dict):
-                sn_name = parsed.get("name") or parsed.get("serial_no") or parsed.get("serialno") or ""
-                sn_id = parsed.get("id")
+                sn_name = parsed.get("name") or parsed.get("serialno_name") or parsed.get("serial_no_name") or parsed.get("serial_no") or parsed.get("serialno") or ""
+                sn_id = parsed.get("id") or parsed.get("serialno_id") or parsed.get("serial_no_id")
                 return sn_name, sn_id
             elif isinstance(parsed, str):
                 return parsed, None
@@ -82,7 +77,7 @@ def extract_sn_info(sn):
             pass
         return sn, None
     elif hasattr(sn, "name"):
-        return getattr(sn, "name", ""), getattr(sn, "id", None)
+        return getattr(sn, "name", ""), getattr(sn, "id", None) or getattr(sn, "serialno_id", None)
     return str(sn), None
 
 async def _send_activity_log(shop_id: str, action: str, entity_id: str, description: str, changes: list = None, entity_name: str = ""):
