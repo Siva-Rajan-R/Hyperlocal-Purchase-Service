@@ -107,8 +107,10 @@ class ReturnService:
                 prod_inv_collection = MONGO_CLIENT["InventoryServiceReadDb"]["ProdInvCollections"]
                 prod_doc = await prod_inv_collection.find_one({"id": target_item.get("product_id"), "shop_id": shop_id})
                 if prod_doc:
-                    variant_id = target_item.get("variant_id")
-                    batch_id = (target_item.get("batch_infos") or {}).get("id") if isinstance(target_item.get("batch_infos"), dict) else target_item.get("batch_id")
+                    variant_id = target_item.get("variant_id") or (target_item.get("variant_infos") or {}).get("id")
+                    batch_infos_obj = target_item.get("batch_infos")
+                    batch_id = (batch_infos_obj.get("id") or batch_infos_obj.get("batch_id")) if isinstance(batch_infos_obj, dict) else target_item.get("batch_id")
+                    batch_name = batch_infos_obj.get("name") if isinstance(batch_infos_obj, dict) else (batch_infos_obj if isinstance(batch_infos_obj, str) else None)
                     
                     target_stock_infos = {}
                     if variant_id and prod_doc.get("variants"):
@@ -119,15 +121,15 @@ class ReturnService:
                         elif isinstance(variants, list):
                             variant_data = next((v for v in variants if isinstance(v, dict) and v.get("id") == variant_id), {})
                         
-                        if batch_id and variant_data.get("batch_infos"):
+                        if (batch_id or batch_name) and variant_data.get("batch_infos"):
                             batches = variant_data.get("batch_infos") or []
-                            matched_b = next((b for b in batches if isinstance(b, dict) and (b.get("id") == batch_id or b.get("name") == batch_id)), {})
+                            matched_b = next((b for b in batches if isinstance(b, dict) and (b.get("id") == batch_id or b.get("name") == batch_id or b.get("id") == batch_name or b.get("name") == batch_name)), {})
                             target_stock_infos = matched_b.get("stock_infos") or matched_b.get("stocks_infos") or {}
                         else:
                             target_stock_infos = variant_data.get("stock_infos") or variant_data.get("stocks_infos") or {}
-                    elif batch_id and prod_doc.get("batch_infos"):
+                    elif (batch_id or batch_name) and prod_doc.get("batch_infos"):
                         batches = prod_doc.get("batch_infos") or []
-                        matched_b = next((b for b in batches if isinstance(b, dict) and (b.get("id") == batch_id or b.get("name") == batch_id)), {})
+                        matched_b = next((b for b in batches if isinstance(b, dict) and (b.get("id") == batch_id or b.get("name") == batch_id or b.get("id") == batch_name or b.get("name") == batch_name)), {})
                         target_stock_infos = matched_b.get("stock_infos") or matched_b.get("stocks_infos") or {}
                     else:
                         target_stock_infos = prod_doc.get("stock_infos") or prod_doc.get("stocks_infos") or {}
@@ -181,7 +183,7 @@ class ReturnService:
                 products_toupdate.append({
                     "shop_id": shop_id,
                     "product_id": target_item.get('product_id'),
-                    "variant_id": target_item.get('variant_id'),
+                    "variant_id": variant_id,
                     "batch_infos": target_item.get('batch_infos'),
                     "serialno_infos": founded_serialno,
                     "stocks": inc_quantity,
