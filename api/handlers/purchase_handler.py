@@ -71,23 +71,31 @@ class HandlePurchaseRequest:
             if product_variant_key not in product_serial_numbers:
                 product_serial_numbers[product_variant_key] = set()
 
-            inc_serialnos = []
             if item.serialno_numbers:
                 for sn_info in item.serialno_numbers:
-                    inc_serialnos.append(sn_info)
+                    if isinstance(sn_info, str):
+                        sn_str = sn_info
+                    elif isinstance(sn_info, dict):
+                        sn_str = sn_info.get("name") or sn_info.get("serial_no") or sn_info.get("serialno") or ""
+                    elif hasattr(sn_info, "name"):
+                        sn_str = getattr(sn_info, "name", "")
+                    else:
+                        sn_str = str(sn_info)
 
-            for sn in inc_serialnos:
-                if sn in product_serial_numbers[product_variant_key]:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=ErrorResponseTypDict(
-                            msg="Error : Creating Purchase",
+                    if not sn_str:
+                        continue
+
+                    if sn_str in product_serial_numbers[product_variant_key]:
+                        raise HTTPException(
                             status_code=400,
-                            description=f"Duplicate serial number '{sn}' for the same product variant could not be added",
-                            success=False
+                            detail=ErrorResponseTypDict(
+                                msg="Error : Creating Purchase",
+                                status_code=400,
+                                description=f"Duplicate serial number '{sn_str}' for the same product variant could not be added",
+                                success=False
+                            )
                         )
-                    )
-                product_serial_numbers[product_variant_key].add(sn)
+                    product_serial_numbers[product_variant_key].add(sn_str)
         
         # for checking the custome fields
         defined_fields = await CustomFieldsService(session=self.session).get_field_by_shop_id(data=GetFieldByShopIdSchema(shop_id=data.shop_id))
