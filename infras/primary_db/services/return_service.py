@@ -233,6 +233,7 @@ class ReturnService:
             }
 
             saga_data = purchase_return_data
+            saga_data["products"] = products_toupdate
             saga_data["executing_user_id"] = executing_user_id
 
             await SagaProducer.emit(

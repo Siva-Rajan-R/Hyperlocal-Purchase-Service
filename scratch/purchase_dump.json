@@ -1,0 +1,235 @@
+{
+    "_id": "6a6ee25e80fa8d9159bdaa28",
+    "purchase_id": "a881bfd4-c3ed-5b86-ac63-ad221e9afc4f",
+    "shop_id": "3f74a412-68d8-5e16-864e-e2f0bc488150",
+    "calculations": {},
+    "charges_infos": {
+        "other_charge": 0.0,
+        "transport_charge": 0.0
+    },
+    "created_at": "2026-08-02T06:23:26.228638",
+    "custom_fields": {},
+    "gst_infos": {
+        "type": "EXCLUSIVE"
+    },
+    "history": [
+        {
+            "version": "v1",
+            "date": "2026-08-02 06:23:26.228730",
+            "payload": {
+                "purchase_id": "a881bfd4-c3ed-5b86-ac63-ad221e9afc4f",
+                "ui_id": "PUR-100026",
+                "invoice_no": "INVOICE-008",
+                "shop_id": "3f74a412-68d8-5e16-864e-e2f0bc488150",
+                "purchase_date": "2026-08-02T00:00:00",
+                "status": "COMPLETED",
+                "supplier": {
+                    "supplier_id": "4d9b3394-0e6c-501e-861e-898a74f6886c",
+                    "supplier_name": "Siva Supplier"
+                },
+                "item_infos": {
+                    "total_pur_items": 1,
+                    "total_pur_stocks": 1.0,
+                    "total_pur_cost": 100.0,
+                    "total_gst_amount": 18.0
+                },
+                "payment_infos": [
+                    {
+                        "amount": 0.0,
+                        "method": "CASH"
+                    }
+                ],
+                "payment_status": "NOT-PAID",
+                "outstanding_amount": 118.0,
+                "charges_infos": {
+                    "other_charge": 0.0,
+                    "transport_charge": 0.0
+                },
+                "calculations": {},
+                "gst_infos": {
+                    "type": "EXCLUSIVE"
+                },
+                "custom_fields": {},
+                "items": [
+                    {
+                        "id": "3820f7c5-cbd9-54e4-86ee-d1ae3cef7bab",
+                        "product_id": "2cc177cc-e149-594c-872e-5dfc7caf221e",
+                        "ui_id": "PRD-100003",
+                        "name": "Serialno Product",
+                        "category_infos": {
+                            "id": "49695a4e-5ea1-5be9-9beb-d7ecdda75154",
+                            "name": "BEVERAGES"
+                        },
+                        "unit_infos": {
+                            "id": "9304dab2-869e-5973-b2e5-ab771cc383ea",
+                            "name": "Box",
+                            "sub_units": []
+                        },
+                        "variant_infos": null,
+                        "batch_infos": null,
+                        "stocks_infos": {
+                            "stocks": 1.0,
+                            "stocks_before": 9.0,
+                            "stocks_after": 10.0
+                        },
+                        "reorder_point_infos": {
+                            "id": "9f070161-76df-5599-acc0-4716e8cb9520",
+                            "reorder_point": 10.0
+                        },
+                        "storage_location_infos": {
+                            "id": "698d1a17-2e8f-52e3-8792-e697fd64aca3",
+                            "name": "LOCATION-A"
+                        },
+                        "serial_numbers": [
+                            {
+                                "id": "5cef486c-5846-5940-882a-0b67e2527a4d",
+                                "name": "EFERFER"
+                            }
+                        ],
+                        "sell_price": 150.0,
+                        "buy_price": 100.0,
+                        "total_amount": 100.0,
+                        "gst": "18%"
+                    }
+                ],
+                "version": "v1",
+                "created_at": "2026-08-02T06:23:26.228638",
+                "updated_at": "2026-08-02T06:23:26.228649"
+            }
+        }
+    ],
+    "invoice_no": "INVOICE-008",
+    "item_infos": {
+        "total_pur_items": 1,
+        "total_pur_stocks": 1.0,
+        "total_pur_cost": 100.0,
+        "total_gst_amount": 18.0
+    },
+    "items": [
+        {
+            "id": "3820f7c5-cbd9-54e4-86ee-d1ae3cef7bab",
+            "product_id": "2cc177cc-e149-594c-872e-5dfc7caf221e",
+            "ui_id": "PRD-100003",
+            "name": "Serialno Product",
+            "category_infos": {
+                "id": "49695a4e-5ea1-5be9-9beb-d7ecdda75154",
+                "name": "BEVERAGES"
+            },
+            "unit_infos": {
+                "id": "9304dab2-869e-5973-b2e5-ab771cc383ea",
+                "name": "Box",
+                "sub_units": []
+            },
+            "variant_infos": null,
+            "batch_infos": null,
+            "stocks_infos": {
+                "stocks": 1.0,
+                "stocks_before": 9.0,
+                "stocks_after": 10.0
+            },
+            "reorder_point_infos": {
+                "id": "9f070161-76df-5599-acc0-4716e8cb9520",
+                "reorder_point": 10.0
+            },
+            "storage_location_infos": {
+                "id": "698d1a17-2e8f-52e3-8792-e697fd64aca3",
+                "name": "LOCATION-A"
+            },
+            "serial_numbers": [
+                {
+                    "id": "5cef486c-5846-5940-882a-0b67e2527a4d",
+                    "name": "EFERFER"
+                }
+            ],
+            "sell_price": 150.0,
+            "buy_price": 100.0,
+            "total_amount": 100.0,
+            "gst": "18%",
+            "returned_quantity": 1.0,
+            "returns": [
+                {
+                    "id": "63d19c0f-a379-579e-9bbb-c65538d67293",
+                    "purchase_item_id": "3820f7c5-cbd9-54e4-86ee-d1ae3cef7bab",
+                    "quantity": 1.0,
+                    "entered_qty": 1.0,
+                    "entered_unit": "Box",
+                    "serialno_infos": [
+                        {
+                            "id": "5cef486c-5846-5940-882a-0b67e2527a4d",
+                            "name": "EFERFER"
+                        }
+                    ],
+                    "refund_amount": 100.0,
+                    "reason": "string",
+                    "created_at": null
+                }
+            ]
+        }
+    ],
+    "outstanding_amount": 118.0,
+    "payment_infos": [
+        {
+            "amount": 0.0,
+            "method": "CASH"
+        }
+    ],
+    "payment_status": "NOT-PAID",
+    "purchase_date": "2026-08-02T00:00:00",
+    "status": "COMPLETED",
+    "supplier": {
+        "supplier_id": "4d9b3394-0e6c-501e-861e-898a74f6886c",
+        "supplier_name": "Siva Supplier"
+    },
+    "ui_id": "PUR-100026",
+    "updated_at": "2026-08-02T06:23:26.228649",
+    "version": "v1",
+    "returns": [
+        {
+            "id": "63d19c0f-a379-579e-9bbb-c65538d67293",
+            "ui_id": "PUR-100027",
+            "sequence_id": null,
+            "status": "COMPLETED",
+            "total_refund_amount": 100.0,
+            "total_refund_qty": 1.0,
+            "payment_infos": {
+                "CASH": 0
+            },
+            "created_at": null,
+            "updated_at": null,
+            "items": [
+                {
+                    "id": "6c3941aa-1f81-520c-b666-495801a9e276",
+                    "purchase_item_id": "3820f7c5-cbd9-54e4-86ee-d1ae3cef7bab",
+                    "product_id": "2cc177cc-e149-594c-872e-5dfc7caf221e",
+                    "quantity": 1.0,
+                    "entered_qty": 1.0,
+                    "entered_unit": "Box",
+                    "refund_amount": 100.0,
+                    "reason": "string",
+                    "name": "Serialno Product",
+                    "ui_id": "PRD-100003",
+                    "category_infos": {
+                        "id": "49695a4e-5ea1-5be9-9beb-d7ecdda75154",
+                        "name": "BEVERAGES"
+                    },
+                    "unit_infos": {
+                        "id": "9304dab2-869e-5973-b2e5-ab771cc383ea",
+                        "name": "Box",
+                        "sub_units": []
+                    },
+                    "variant_infos": null,
+                    "batch_infos": null,
+                    "serialno_infos": [
+                        {
+                            "id": "5cef486c-5846-5940-882a-0b67e2527a4d",
+                            "name": "EFERFER"
+                        }
+                    ],
+                    "buy_price": 100.0,
+                    "sell_price": 150.0,
+                    "gst": "18%"
+                }
+            ]
+        }
+    ]
+}
