@@ -56,6 +56,28 @@ def normalize_serial_numbers(serials):
             result.append({"id": str(uuid.uuid4()), "name": str(item)})
     return result
 
+def resolve_serials_from_inventory(itm_serials, db_serialno_infos=None):
+    if not itm_serials:
+        return []
+    
+    db_sn_map = {}
+    if db_serialno_infos:
+        for sn in db_serialno_infos:
+            if isinstance(sn, dict):
+                s_name = sn.get("name") or sn.get("serialno_name") or sn.get("serial_no_name") or sn.get("serial_no") or sn.get("serialno") or ""
+                s_id = sn.get("id") or sn.get("serialno_id") or sn.get("serial_no_id")
+                if s_name and s_id:
+                    db_sn_map[str(s_name).strip()] = str(s_id)
+
+    result = []
+    normalized = normalize_serial_numbers(itm_serials)
+    for sn_obj in normalized:
+        sn_name = str(sn_obj.get("name", "")).strip()
+        if sn_name in db_sn_map:
+            sn_obj["id"] = db_sn_map[sn_name]
+        result.append(sn_obj)
+    return result
+
 def extract_sn_info(sn):
     if not sn:
         return "", None

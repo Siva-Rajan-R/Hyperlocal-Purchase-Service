@@ -12,7 +12,7 @@ from integrations.utility_service import get_ui_id, get_shop_category, get_shop_
 from typing import Optional, List, Dict, Any
 import datetime
 from infras.primary_db.services.customfield_service import CustomFieldsService
-from infras.primary_db.services.purchase_service import normalize_serial_numbers
+from infras.primary_db.services.purchase_service import normalize_serial_numbers, resolve_serials_from_inventory
 from schemas.v1.request_schemas.customfield_schema import CreateCustomFieldSchema,CreateCustomFieldValueSchema,BulkCreateCustomFieldValuesSchema,UpdateCustomFieldSchema,UpdateCustomFieldValueSchema,GetFieldByShopIdSchema,GetFieldById,GetFieldByName,GetValueByIdName,GetvaluesByCustomerId
 from schemas.v1.purchase_schemas.request_schema import GetPurchaseByIdSchema
 
@@ -394,7 +394,7 @@ class MessagingQueuePurchasegproducer:
                                 product_id=product_id,
                                 variant_id=variant_id,
                                 batch_id=batch_infos.get('id', batch_id),
-                                serial_numbers=normalize_serial_numbers(itm.get('serialno_numbers') or itm.get('serial_numbers') or []),
+                                serial_numbers=resolve_serials_from_inventory(itm.get('serialno_numbers') or itm.get('serial_numbers') or [], serialno_infos),
                                 gst=gst,
                                 stocks=stocks,
                                 stocks_before=stock_before,
@@ -447,7 +447,7 @@ class MessagingQueuePurchasegproducer:
                                     stocks_infos=stock_infos_model,
                                     reorder_point_infos=reorder_point_model,
                                     storage_location_infos=storage_location_model,
-                                    serial_numbers=normalize_serial_numbers(itm.get('serialno_numbers') or itm.get('serial_numbers') or []),
+                                    serial_numbers=resolve_serials_from_inventory(itm.get('serialno_numbers') or itm.get('serial_numbers') or [], serialno_infos),
                                     sell_price=float(pricing_infos.get('sell_price', 0)),
                                     buy_price=buy_price_val,
                                     total_amount=buy_price_val * stocks,
