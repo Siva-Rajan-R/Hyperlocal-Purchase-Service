@@ -78,7 +78,7 @@ class MessagingQueuePurchaseReturnProducer:
                                         "unit_infos": original_item.get("unit_infos"),
                                         "variant_infos": original_item.get("variant_infos"),
                                         "batch_infos": original_item.get("batch_infos"),
-                                        "serialno_infos": original_item.get("serialno_infos") or original_item.get("serial_numbers"),
+                                        "serialno_infos": itm.get("serialno_infos") or [],
                                         "buy_price": original_item.get("buy_price"),
                                         "sell_price": original_item.get("sell_price"),
                                         "gst": original_item.get("gst")
