@@ -62,6 +62,7 @@ async def verify_and_update(purchase_data: dict, headers: dict, payload: dict, r
             'stocks': stock_infos.get('stocks', 0),
             'type': 'INCREMENT',
             "entity_name": 'PURCHASE',
+            "entity_id": purchase_data.get('ui_id') or purchase_data.get('invoice_no'),
             'create_stock_mov_adj': True
         })
 

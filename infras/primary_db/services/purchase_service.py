@@ -547,9 +547,12 @@ class PurchaseService:
             )
         original_outstanding = float(existing_read_doc_initial.get("outstanding_amount", 0.0)) if existing_read_doc_initial else 0.0
         original_supplier_name = existing_read_doc_initial.get("supplier", {}).get("supplier_name") if existing_read_doc_initial else None
+        old_payments_list = existing_read_doc_initial.get("payment_infos", []) if existing_read_doc_initial else []
+        original_paid_amount = sum(float(p.get("amount", 0.0)) for p in old_payments_list)
 
         effective_supplier_id = data.supplier_id or pur_get_res.supplier_id
         effective_invoice_no = data.invoice_no if data.invoice_no is not None else pur_get_res.invoice_no
+        effective_pur_identifier = getattr(pur_get_res, "ui_id", None) or effective_invoice_no or data.id
 
         if effective_invoice_no:
             has_conflict = await self.check_invoice_conflict(
@@ -720,7 +723,8 @@ class PurchaseService:
                 'sell_price': removed_item.pricing_infos[0].sell_price if removed_item.pricing_infos else 0.0,
                 'stocks': purchased_qty,
                 'type': 'DECREMENT',
-                "entity_name": 'PURCHASE',
+                "entity_name": 'PURCHASE_UPDATE',
+                "entity_id": effective_pur_identifier,
                 'create_stock_mov_adj': True
             })
 
@@ -776,6 +780,13 @@ class PurchaseService:
         
         mapped_items={item.id: item for item in pur_get_res.items}
         ic(mapped_items)
+
+        # Secondary map: (product_id, variant_id, batch_id) → db_item
+        # Used to detect when a payload item without an ID matches an existing DB item
+        mapped_items_by_product_combo = {}
+        for db_item_x in pur_get_res.items:
+            combo_key = (db_item_x.product_id, db_item_x.variant_id, db_item_x.batch_id)
+            mapped_items_by_product_combo[combo_key] = db_item_x
         
         # Validate paid amount before performing any database updates
         temp_total_pur_cost = 0.0
@@ -790,7 +801,17 @@ class PurchaseService:
             
             pur_item_id = item.id
             is_new = not pur_item_id or pur_item_id not in mapped_items
-            
+
+            # Check combo match (product_id + variant_id + batch_id) to detect
+            # an item sent without ID that actually exists in this purchase already
+            if is_new:
+                _v_chk = item.variant_id
+                _b_chk = (item.batch_infos.id if item.batch_infos else None)
+                _combo_match = mapped_items_by_product_combo.get((item.product_id, _v_chk, _b_chk))
+                if _combo_match:
+                    pur_item_id = _combo_match.id
+                    is_new = False
+
             if is_new:
                 if not item.stock_infos or not item.pricing_infos or item.stock_infos.stocks is None:
                     from fastapi import HTTPException
@@ -812,7 +833,7 @@ class PurchaseService:
                 prev_pricing = db_item.pricing_infos[0] if db_item.pricing_infos else None
                 prev_gst_infos = pur_get_res.gst_infos
                 stock_toupdate = t_stocks
-            
+
             db_item_local = mapped_items.get(pur_item_id) if not is_new else None
             item_gst = t_gst or (db_item_local.gst if db_item_local else (prod_doc.get("gst") or "0%"))
             buy_price_val = item.pricing_infos.buy_price if item.pricing_infos else (prev_pricing.buy_price if prev_pricing else 0.0)
@@ -873,6 +894,21 @@ class PurchaseService:
 
             pur_item_id = item.id
             is_new_item = not pur_item_id or pur_item_id not in mapped_items
+
+            # If the incoming item has no ID (or ID not in DB), check if an existing DB item
+            # has the same product_id / variant_id / batch_id combo.  If so, treat it as an
+            # UPDATE of that existing item rather than creating a duplicate new record.
+            if is_new_item:
+                inc_batch_id_check = (item.batch_infos.id if item.batch_infos else None) if has_batch else None
+                inc_variant_id_check = item.variant_id if has_variant else None
+                combo_key_check = (item.product_id, inc_variant_id_check, inc_batch_id_check)
+                matching_db_item = mapped_items_by_product_combo.get(combo_key_check)
+                if matching_db_item:
+                    # Redirect to update path using the existing DB item's ID
+                    pur_item_id = matching_db_item.id
+                    is_new_item = False
+                    ic(f"Redirecting item {item.product_id} from NEW to UPDATE using existing item id {pur_item_id}")
+
             db_item_local = mapped_items.get(pur_item_id) if not is_new_item else None
             item_gst = item.gst or (db_item_local.gst if db_item_local else (prod_doc.get("gst") or "0%"))
             
@@ -883,20 +919,39 @@ class PurchaseService:
                 prev_serialno_numbers = set()
                 prev_stocks = 0.0
                 target_stock_infos = {}
-                if has_batch:
-                    b_id = item.batch_infos.id if item.batch_infos else None
-                    b_name = item.batch_infos.name if item.batch_infos else None
-                    for b in prod_doc.get("batch_infos", []):
-                        if (b_id and b.get("id") == b_id) or (b_name and b.get("name") == b_name):
-                            prev_batch_id = b.get("id") or b_id
-                            target_stock_infos = b.get("stock_infos") or {}
-                            break
+                b_id = item.batch_infos.id if item.batch_infos else None
+                b_name = item.batch_infos.name if item.batch_infos else None
+                
+                if has_variant and prev_variant_id:
+                    variants = prod_doc.get("variants") or {}
+                    variant_data = {}
+                    if isinstance(variants, dict):
+                        variant_data = variants.get(prev_variant_id) or {}
+                    elif isinstance(variants, list):
+                        variant_data = next((v for v in variants if isinstance(v, dict) and v.get("id") == prev_variant_id), {})
+                    
+                    if has_batch:
+                        batches = variant_data.get("batch_infos") or []
+                        matched_b = next((b for b in batches if isinstance(b, dict) and ((b_id and b.get("id") == b_id) or (b_name and b.get("name") == b_name))), {})
+                        if matched_b:
+                            prev_batch_id = matched_b.get("id") or b_id
+                        target_stock_infos = matched_b.get("stock_infos") or matched_b.get("stocks_infos") or {}
+                        if not prev_batch_id and item.batch_infos:
+                            prev_batch_id = item.batch_infos.id or item.batch_infos.name
+                    else:
+                        target_stock_infos = variant_data.get("stock_infos") or variant_data.get("stocks_infos") or {}
+                elif has_batch:
+                    batches = prod_doc.get("batch_infos") or []
+                    matched_b = next((b for b in batches if isinstance(b, dict) and ((b_id and b.get("id") == b_id) or (b_name and b.get("name") == b_name))), {})
+                    if matched_b:
+                        prev_batch_id = matched_b.get("id") or b_id
+                    target_stock_infos = matched_b.get("stock_infos") or matched_b.get("stocks_infos") or {}
                     if not prev_batch_id and item.batch_infos:
                         prev_batch_id = item.batch_infos.id or item.batch_infos.name
                 else:
-                    target_stock_infos = prod_doc.get("stock_infos") or {}
+                    target_stock_infos = prod_doc.get("stock_infos") or prod_doc.get("stocks_infos") or {}
                 
-                prev_stocks_before = float(target_stock_infos.get("physical_stocks") or 0.0)
+                prev_stocks_before = float(target_stock_infos.get("physical_stocks") if target_stock_infos.get("physical_stocks") is not None else (target_stock_infos.get("stocks") or 0.0))
                 prev_stocks_after = prev_stocks_before + item.stock_infos.stocks
                 prev_stl = None
                 prev_rop = None
@@ -1053,7 +1108,8 @@ class PurchaseService:
                         'sell_price': db_item.pricing_infos[0].sell_price if db_item.pricing_infos else 0.0,
                         'stocks': db_item.stocks,
                         'type': 'DECREMENT',
-                        "entity_name": 'PURCHASE',
+                        "entity_name": 'PURCHASE_UPDATE',
+                        "entity_id": effective_pur_identifier,
                         'create_stock_mov_adj': True
                     })
 
@@ -1127,7 +1183,8 @@ class PurchaseService:
                         'sell_price': item.pricing_infos.sell_price if item.pricing_infos else 0.0,
                         'stocks': t_stocks,
                         'type': 'INCREMENT',
-                        "entity_name": 'PURCHASE',
+                        "entity_name": 'PURCHASE_UPDATE',
+                        "entity_id": effective_pur_identifier,
                         'create_stock_mov_adj': True
                     })
                 else:
@@ -1155,7 +1212,7 @@ class PurchaseService:
                     prev_variant_id = db_item.variant_id
                     prev_serialno_numbers = set(db_item.serial_numbers or [])
                     prev_stocks = db_item.stocks
-                    prev_stocks_before = db_item.stocks_after
+                    prev_stocks_before = db_item.stocks_before
                     prev_stocks_after = db_item.stocks_after
 
                 prev_stl = db_item.storage_locations[0] if db_item.storage_locations else None
@@ -1256,7 +1313,7 @@ class PurchaseService:
                         gst=item_gst,
                         stocks=item.stock_infos.stocks,
                         stocks_before=prev_stocks_before,
-                        stocks_after=prev_stocks_after+stock_diff,
+                        stocks_after=prev_stocks_before + item.stock_infos.stocks,
                         serial_numbers=norm_new_serials
                     )
                 )
@@ -1371,7 +1428,8 @@ class PurchaseService:
                     'sell_price': sell_price_val,
                     'stocks': stock_toupdate,
                     'type': 'INCREMENT',
-                    "entity_name": 'PURCHASE',
+                    "entity_name": 'PURCHASE_UPDATE',
+                    "entity_id": effective_pur_identifier,
                     'create_stock_mov_adj': True
                 })
             else:
@@ -1392,7 +1450,8 @@ class PurchaseService:
                             'sell_price': sell_price_val,
                             'stocks': stock_diff,
                             'type': 'INCREMENT',
-                            "entity_name": 'PURCHASE',
+                            "entity_name": 'PURCHASE_UPDATE',
+                            "entity_id": effective_pur_identifier,
                             'create_stock_mov_adj': True
                         })
                     # Existing item stock DECREMENT
@@ -1450,7 +1509,8 @@ class PurchaseService:
                             'sell_price': sell_price_val,
                             'stocks': abs(stock_diff),
                             'type': 'DECREMENT',
-                            "entity_name": 'PURCHASE',
+                            "entity_name": 'PURCHASE_UPDATE',
+                            "entity_id": effective_pur_identifier,
                             'create_stock_mov_adj': True
                         })
                     # If stock quantity is unchanged, but serial numbers were swapped/replaced:
@@ -1469,7 +1529,8 @@ class PurchaseService:
                                 'sell_price': sell_price_val,
                                 'stocks': 0.0,
                                 'type': 'INCREMENT',
-                                "entity_name": 'PURCHASE',
+                                "entity_name": 'PURCHASE_UPDATE',
+                                "entity_id": effective_pur_identifier,
                                 'create_stock_mov_adj': True
                             })
                         if removed_names:
@@ -1494,7 +1555,8 @@ class PurchaseService:
                                 'sell_price': sell_price_val,
                                 'stocks': 0.0,
                                 'type': 'DECREMENT',
-                                "entity_name": 'PURCHASE',
+                                "entity_name": 'PURCHASE_UPDATE',
+                                "entity_id": effective_pur_identifier,
                                 'create_stock_mov_adj': True
                             })
 
@@ -1879,47 +1941,71 @@ class PurchaseService:
                     asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(fresh_pur.shop_id, old_supplier_id))
                     asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(fresh_pur.shop_id, supplier_id))
 
-                elif new_outstanding != old_outstanding:
-                    diff_amount = abs(new_outstanding - old_outstanding)
-                    update_type = "INCREMENT" if new_outstanding > old_outstanding else "DECREMENT"
-                    
-                    try:
-                        supplier_payload = {
-                            "id": supplier_id,
-                            "shop_id": fresh_pur.shop_id,
-                            "outstanding_infos": {
-                                "amount": float(diff_amount)
-                            },
-                            "type": update_type
-                        }
-                        if update_type == "DECREMENT":
+                else:
+                    paid_diff = round(total_amount_paid - original_paid_amount, 2)
+                    outstanding_diff = round(new_outstanding - old_outstanding, 2)
+
+                    if paid_diff != 0 or outstanding_diff != 0:
+                        if paid_diff > 0:
+                            update_type = "DECREMENT"
+                            diff_amount = paid_diff
                             last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
                             pay_method = last_payment.get("mode") or last_payment.get("method") or "N/A"
                             if hasattr(pay_method, "value"):
                                 pay_method = pay_method.value
-                            supplier_payload.update({
+                            notes_str = last_payment.get("notes") or f"Additional payment of {paid_diff} for purchase {getattr(fresh_pur, 'invoice_no', '')}"
+                            cleared_amt = float(paid_diff)
+                        elif paid_diff < 0:
+                            update_type = "INCREMENT"
+                            diff_amount = abs(paid_diff)
+                            pay_method = "N/A"
+                            notes_str = f"Payment reduced by {abs(paid_diff)} for purchase {getattr(fresh_pur, 'invoice_no', '')}"
+                            cleared_amt = 0.0
+                        elif outstanding_diff > 0:
+                            update_type = "INCREMENT"
+                            diff_amount = outstanding_diff
+                            pay_method = "N/A"
+                            notes_str = f"Purchase updated (cost increased by {outstanding_diff})"
+                            cleared_amt = 0.0
+                        else:
+                            update_type = "DECREMENT"
+                            diff_amount = abs(outstanding_diff)
+                            pay_method = "N/A"
+                            notes_str = f"Purchase updated (cost reduced by {abs(outstanding_diff)})"
+                            cleared_amt = 0.0
+
+                        try:
+                            supplier_payload = {
+                                "id": supplier_id,
+                                "shop_id": fresh_pur.shop_id,
+                                "outstanding_infos": {
+                                    "amount": float(diff_amount)
+                                },
+                                "type": update_type,
                                 "entity_name": "purchase",
                                 "entity_id": fresh_pur.id,
                                 "invoice_no": getattr(fresh_pur, "invoice_no", None),
                                 "payment_method": str(pay_method),
-                                "notes": last_payment.get("notes") or f"cleared outstanding for the purchase"
-                            })
-                        await rabbitmq_msg_obj.publish_event(
-                            routing_key="suppliers.service.routing.key",
-                            exchange_name="suppliers.service.exchange",
-                            payload=supplier_payload,
-                            headers={
-                                "entity_name": "update_supllier_outstanding",
-                                "service_name": "SUPPLIERS",
-                                "saga_id": "none",
-                                "reply_key": "none",
-                                "reply_exchange": "none",
-                                "reply_entity_name": "none",
-                                "body": supplier_payload
+                                "notes": notes_str,
+                                "cleared_amount": cleared_amt,
+                                "outstanding_amount": float(new_outstanding)
                             }
-                        )
-                    except Exception as e:
-                        ic(f"Failed to publish supplier outstanding update: {e}")
+                            await rabbitmq_msg_obj.publish_event(
+                                routing_key="suppliers.service.routing.key",
+                                exchange_name="suppliers.service.exchange",
+                                payload=supplier_payload,
+                                headers={
+                                    "entity_name": "update_supllier_outstanding",
+                                    "service_name": "SUPPLIERS",
+                                    "saga_id": "none",
+                                    "reply_key": "none",
+                                    "reply_exchange": "none",
+                                    "reply_entity_name": "none",
+                                    "body": supplier_payload
+                                }
+                            )
+                        except Exception as e:
+                            ic(f"Failed to publish supplier outstanding update: {e}")
 
                 delta_outstanding = new_outstanding - old_outstanding
                 
