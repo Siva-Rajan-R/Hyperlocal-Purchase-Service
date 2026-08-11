@@ -1,11 +1,14 @@
 from pydantic import BaseModel
 from typing import Optional,List
-from core.data_formats.enums.purchase_enums import PurchasePaymentMethods
+from core.data_formats.enums.purchase_enums import PurchasePaymentMethods,PurchaseCalculationInfosAdditionalChargesEnums
 from datetime import date
 
 
+from pydantic import BaseModel, ConfigDict
+
 class PurchaseCalculationInfos(BaseModel):
-    ...
+    model_config = ConfigDict(extra="allow")
+    distribute_by:PurchaseCalculationInfosAdditionalChargesEnums
 
 class PurchaseBatchInfosType(BaseModel):
     id:Optional[str]=None

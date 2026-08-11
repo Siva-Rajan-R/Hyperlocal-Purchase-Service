@@ -31,3 +31,9 @@ class PurchaseStatusEnums(str,Enum):
     COMPLETED="COMPLETED"
     CANCELED="CANCELED"
 
+class PurchaseCalculationInfosAdditionalChargesEnums(str,Enum):
+    NONE="NONE"
+    BY_UNIT="BY_UNIT"
+    BY_VALUE="BY_VALUE"
+    EQUALLY="EQUALLY"
+
