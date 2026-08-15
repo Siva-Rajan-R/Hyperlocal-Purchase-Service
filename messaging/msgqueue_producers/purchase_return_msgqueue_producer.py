@@ -147,6 +147,63 @@ class MessagingQueuePurchaseReturnProducer:
                         except Exception as e:
                             ic(f"Failed to publish activity log: {e}")
 
+                        try:
+                            # Update supplier ledger if there is a refund amount
+                            total_refund = return_toadd.get("total_refund_amount", 0.0)
+                            if total_refund > 0:
+                                invoice_no = existing_purchase.get("invoice_no") or existing_purchase.get("ui_id") or purchase_id
+                                supplier_id = existing_purchase.get("supplier_id") or (existing_purchase.get("supplier") or {}).get("supplier_id")
+                                if supplier_id:
+                                    supplier_payload = {
+                                        "shop_id": shop_id,
+                                        "id": supplier_id,
+                                        "outstanding_infos": {"amount": float(total_refund)},
+                                        "type": "DECREMENT",
+                                        "entity_name": "purchase_return",
+                                        "entity_id": str(return_toadd.get("id") or purchase_id),
+                                        "invoice_no": str(invoice_no or ""),
+                                        "payment_method": "N/A",
+                                        "cleared_amount": float(total_refund),
+                                        "notes": f"Purchase return for invoice {invoice_no}"
+                                    }
+                                    await rabbitmq_msg_obj.publish_event(
+                                        routing_key="suppliers.service.routing.key",
+                                        exchange_name="suppliers.service.exchange",
+                                        payload=supplier_payload,
+                                        headers={
+                                            **self.headers.copy(),
+                                            "body": supplier_payload,
+                                            "entity_name": "update_supllier_outstanding",
+                                            "service_name": "SUPPLIERS"
+                                        }
+                                    )
+                        except Exception as e:
+                            ic(f"Failed to publish supplier ledger update: {e}")
+
+                        try:
+                            analytics_payload = {
+                                "shop_id": shop_id,
+                                "entity_name": "PURCHASE",
+                                "entity_id": str(purchase_id),
+                                "action": "RETURN"
+                            }
+                            await rabbitmq_msg_obj.publish_event(
+                                routing_key="analytics.service.routing.key",
+                                exchange_name="analytics.service.exchange",
+                                payload=analytics_payload,
+                                headers={
+                                    "entity_name": "purchase_event",
+                                    "service_name": "ANALYTICS",
+                                    "saga_id": "none",
+                                    "reply_key": "none",
+                                    "reply_exchange": "none",
+                                    "reply_entity_name": "none",
+                                    "body": analytics_payload
+                                }
+                            )
+                        except Exception as e:
+                            ic(f"Failed to publish analytics event: {e}")
+
                 try:
                     from helpers.emit_notification import emit_notification
                     import asyncio

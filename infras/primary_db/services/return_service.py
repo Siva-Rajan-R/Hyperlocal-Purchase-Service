@@ -189,7 +189,9 @@ class ReturnService:
                     "stocks": inc_quantity,
                     "entity_name": "OFFLINE_PURCHASE_RETURN",
                     "type": "DECREMENT",
-                    "create_stock_mov_adj": True
+                    "create_stock_mov_adj": True,
+                    "ui_id": ui_id,
+                    "purchase_id": purchase_id
                 })
 
                 total_refund_qty += inc_quantity
