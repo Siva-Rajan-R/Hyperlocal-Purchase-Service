@@ -1513,7 +1513,7 @@ class PurchaseService:
                             "entity_id": effective_pur_identifier,
                             'create_stock_mov_adj': True
                         })
-                    # If stock quantity is unchanged, but serial numbers were swapped/replaced:
+                    # If stock quantity is unchanged, but serial numbers were swapped/replaced or just prices updated:
                     else:
                         if added_sn_infos:
                             inventory_toupdate.append({
@@ -1558,6 +1558,25 @@ class PurchaseService:
                                 "entity_name": 'PURCHASE_UPDATE',
                                 "entity_id": effective_pur_identifier,
                                 'create_stock_mov_adj': True
+                            })
+                        if not added_sn_infos and not removed_names:
+                            # Update prices and details even if stock quantity is unchanged
+                            inventory_toupdate.append({
+                                'shop_id': data.shop_id,
+                                'product_id': item.product_id,
+                                'variant_id': curr_variant_id,
+                                'batch_infos': item.batch_infos.model_dump(mode="json") if item.batch_infos else ({'id': curr_batch_id} if curr_batch_id else None),
+                                'serialno_infos': [],
+                                'storage_location': item.storage_location_infos.name if item.storage_location_infos else None,
+                                'reorder_point': item.reorder_point_infos.reorder_point if item.reorder_point_infos else None,
+                                'gst': item_gst,
+                                'buy_price': buy_price_val,
+                                'sell_price': sell_price_val,
+                                'stocks': 0.0,
+                                'type': 'INCREMENT',
+                                "entity_name": 'PURCHASE_UPDATE',
+                                "entity_id": effective_pur_identifier,
+                                'create_stock_mov_adj': False
                             })
 
             tot_pur_cost=buy_price_val * stock_toupdate
