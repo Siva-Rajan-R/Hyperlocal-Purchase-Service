@@ -317,6 +317,13 @@ class PurchaseRepo:
                 conds.append(Purchase.created_at <= to_dt)
             except Exception:
                 pass
+        
+        if getattr(data, 'status', None):
+            conds.append(Purchase.status == data.status)
+        
+        if getattr(data, 'outstanding', None):
+            conds.append(Purchase.payment_status.notin_(["completed", "COMPLETED", "Completed"]))
+            conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
 
         stmt = (
             select(Purchase)
@@ -350,7 +357,7 @@ class PurchaseRepo:
         if conds:
             stmt = stmt.where(and_(*conds))
 
-        stmt = stmt.offset(offset=cursor).limit(limit=data.limit)
+        stmt = stmt.order_by(Purchase.created_at.desc()).offset(offset=cursor).limit(limit=data.limit)
         res = (await self.session.execute(stmt)).scalars().all()
         ic(res)
         return res
@@ -388,6 +395,13 @@ class PurchaseRepo:
             except Exception:
                 pass
 
+        if getattr(data, 'status', None):
+            conds.append(Purchase.status == data.status)
+
+        if getattr(data, 'outstanding', None):
+            conds.append(Purchase.payment_status.notin_(["completed", "COMPLETED", "Completed"]))
+            conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
+
         stmt = (
             select(Purchase)
             .where(and_(*conds))
@@ -417,6 +431,7 @@ class PurchaseRepo:
                     *self.rop_cols
                 ),
             )
+            .order_by(Purchase.created_at.desc())
             .offset(offset=cursor).limit(limit=data.limit)
         )
 

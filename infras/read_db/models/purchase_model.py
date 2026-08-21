@@ -47,6 +47,10 @@ class PurchaseItemReadModel(BaseModel):
     buy_price: float = 0
     total_amount: float = 0
     
+    returned_quantity: float = 0.0
+    returned_amount: float = 0.0
+    exchanged_amount: float = 0.0
+
     gst: Optional[str] = None
 
 class SupplierInfo(BaseModel):
@@ -72,10 +76,10 @@ class PurchaseReadModel(BaseModel):
     payment_infos: list = []
     payment_status: str = "completed"
     outstanding_amount : float = 0.0 
+    paid_amount: float = 0.0
     charges_infos: dict = {}
     calculations: dict = {}
     gst_infos: dict = {}
-    payment_status:str
     custom_fields: Optional[dict] = {}
     items: List[PurchaseItemReadModel] = []
     version: Optional[str] = "v1"

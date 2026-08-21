@@ -80,6 +80,7 @@ class PurchaseReadDbRepo:
             query["status"] = data.status
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
+            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
         if search_q:
             regex = {"$regex": str(search_q).strip(), "$options": "i"}
@@ -113,6 +114,7 @@ class PurchaseReadDbRepo:
             query["supplier_id"] = data.supplier_id
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
+            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
         if search_q:
             regex = {"$regex": str(search_q).strip(), "$options": "i"}
@@ -157,6 +159,7 @@ class PurchaseReadDbRepo:
         }
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
+            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
@@ -173,6 +176,7 @@ class PurchaseReadDbRepo:
         }
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
+            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}

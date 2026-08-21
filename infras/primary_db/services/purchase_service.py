@@ -405,7 +405,8 @@ class PurchaseService:
             gst_infos=gst_dict,
             custom_fields=data.custom_fields or {},
             items=read_items,
-            version="v1"
+            version="v1",
+            paid_amount=0.0
         )
 
         await PurchaseReadDbRepo.add_updatereaddb(purchase_read_model)
@@ -1872,7 +1873,8 @@ class PurchaseService:
                 custom_fields=cf_dict,
                 items=read_items,
                 item_infos=item_infos,
-                version=new_version
+                version=new_version,
+                paid_amount=total_amount_paid
             )
             
             # Save history copy to PG
@@ -1969,7 +1971,7 @@ class PurchaseService:
                             update_type = "DECREMENT"
                             diff_amount = paid_diff
                             last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
-                            pay_method = last_payment.get("mode") or last_payment.get("method") or "N/A"
+                            pay_method = last_payment.get("mode") or last_payment.get("method") or "ADJUSTMENT"
                             if hasattr(pay_method, "value"):
                                 pay_method = pay_method.value
                             notes_str = last_payment.get("notes") or f"Additional payment of {paid_diff} for purchase {getattr(fresh_pur, 'invoice_no', '')}"
@@ -1977,19 +1979,28 @@ class PurchaseService:
                         elif paid_diff < 0:
                             update_type = "INCREMENT"
                             diff_amount = abs(paid_diff)
-                            pay_method = "N/A"
+                            last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
+                            pay_method = last_payment.get("mode") or last_payment.get("method") or "ADJUSTMENT"
+                            if hasattr(pay_method, "value"):
+                                pay_method = pay_method.value
                             notes_str = f"Payment reduced by {abs(paid_diff)} for purchase {getattr(fresh_pur, 'invoice_no', '')}"
                             cleared_amt = 0.0
                         elif outstanding_diff > 0:
                             update_type = "INCREMENT"
                             diff_amount = outstanding_diff
-                            pay_method = "N/A"
+                            last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
+                            pay_method = last_payment.get("mode") or last_payment.get("method") or "ADJUSTMENT"
+                            if hasattr(pay_method, "value"):
+                                pay_method = pay_method.value
                             notes_str = f"Purchase updated (cost increased by {outstanding_diff})"
                             cleared_amt = 0.0
                         else:
                             update_type = "DECREMENT"
                             diff_amount = abs(outstanding_diff)
-                            pay_method = "N/A"
+                            last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
+                            pay_method = last_payment.get("mode") or last_payment.get("method") or "ADJUSTMENT"
+                            if hasattr(pay_method, "value"):
+                                pay_method = pay_method.value
                             notes_str = f"Purchase updated (cost reduced by {abs(outstanding_diff)})"
                             cleared_amt = 0.0
 
@@ -2436,6 +2447,8 @@ class PurchaseService:
                 "stocks": qty_to_revert,
                 "type": "DECREMENT",
                 "entity_name": "PURCHASE_CANCEL",
+                "entity_id": purchase_id,
+                "buy_price": proc_item.get("buy_price", 0.0),
                 "create_stock_mov_adj": True
             })
 

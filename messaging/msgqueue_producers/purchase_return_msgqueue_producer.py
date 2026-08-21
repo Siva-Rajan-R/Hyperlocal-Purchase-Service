@@ -92,6 +92,9 @@ class MessagingQueuePurchaseReturnProducer:
                                         curr_returned = existing_item.get("returned_quantity") or 0.0
                                         existing_item["returned_quantity"] = curr_returned + float(itm.get("quantity", 0))
 
+                                        curr_returned_amt = existing_item.get("returned_amount") or 0.0
+                                        existing_item["returned_amount"] = curr_returned_amt + float(itm.get("refund_amount", 0.0))
+
                                         if "returns" not in existing_item or existing_item["returns"] is None:
                                             existing_item["returns"] = []
 
@@ -154,6 +157,28 @@ class MessagingQueuePurchaseReturnProducer:
                                 invoice_no = existing_purchase.get("invoice_no") or existing_purchase.get("ui_id") or purchase_id
                                 supplier_id = existing_purchase.get("supplier_id") or (existing_purchase.get("supplier") or {}).get("supplier_id")
                                 if supplier_id:
+                                    # payment_infos could be a dict like {"mode": "CASH", "amount": 100} or {"CASH": {"amount": 100}}
+                                    pay_method = "ON_CREDIT"
+                                    payment_infos = return_toadd.get("payment_infos", {})
+                                    if isinstance(payment_infos, dict) and len(payment_infos) > 0:
+                                        # First try to see if they passed 'mode', 'method', or 'type' directly
+                                        pay_method = payment_infos.get("mode") or payment_infos.get("method") or payment_infos.get("type")
+                                        if not pay_method:
+                                            # Fallback if they passed it as keys e.g. {"CASH": {"amount": 100}}
+                                            keys = [k for k in payment_infos.keys() if k not in ["amount", "reason", "mode", "method", "type", "ON_CREDIT", "notes"]]
+                                            if keys:
+                                                pay_method = keys[0]
+                                    elif isinstance(payment_infos, list) and len(payment_infos) > 0:
+                                        p_info = payment_infos[0]
+                                        pay_method = p_info.get("mode") or p_info.get("method") or p_info.get("type")
+                                        
+                                    if not pay_method:
+                                        pay_method = "ON_CREDIT"
+
+                                    # Calculate invoice-level outstanding after the return
+                                    prev_invoice_outstanding = float(existing_purchase.get("outstanding_amount", 0.0))
+                                    new_invoice_outstanding = max(0.0, round(prev_invoice_outstanding - float(total_refund), 2))
+
                                     supplier_payload = {
                                         "shop_id": shop_id,
                                         "id": supplier_id,
@@ -162,9 +187,10 @@ class MessagingQueuePurchaseReturnProducer:
                                         "entity_name": "purchase_return",
                                         "entity_id": str(return_toadd.get("id") or purchase_id),
                                         "invoice_no": str(invoice_no or ""),
-                                        "payment_method": "N/A",
+                                        "payment_method": pay_method,
                                         "cleared_amount": float(total_refund),
-                                        "notes": f"Purchase return for invoice {invoice_no}"
+                                        "outstanding_amount": new_invoice_outstanding,
+                                        "notes": f"Purchase return for invoice {invoice_no}. Refund amount: {float(total_refund)}"
                                     }
                                     await rabbitmq_msg_obj.publish_event(
                                         routing_key="suppliers.service.routing.key",
@@ -179,6 +205,7 @@ class MessagingQueuePurchaseReturnProducer:
                                     )
                         except Exception as e:
                             ic(f"Failed to publish supplier ledger update: {e}")
+
 
                         try:
                             analytics_payload = {
