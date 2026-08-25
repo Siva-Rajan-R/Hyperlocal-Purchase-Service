@@ -486,7 +486,8 @@ class PurchaseRepo:
             return None
         conds = [
             Purchase.shop_id == shop_id,
-            Purchase.invoice_no == invoice_no
+            Purchase.invoice_no == invoice_no,
+            Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"])
         ]
         if supplier_id:
             conds.append(Purchase.supplier_id == supplier_id)
@@ -500,7 +501,11 @@ class PurchaseRepo:
     async def verify_invoice_exists(self, invoice_no: str, shop_id: str, exclude_purchase_id: str = None):
         if not invoice_no:
             return False
-        conds = [Purchase.invoice_no == invoice_no, Purchase.shop_id == shop_id]
+        conds = [
+            Purchase.invoice_no == invoice_no,
+            Purchase.shop_id == shop_id,
+            Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"])
+        ]
         if exclude_purchase_id:
             conds.append(Purchase.id != exclude_purchase_id)
         stmt = (

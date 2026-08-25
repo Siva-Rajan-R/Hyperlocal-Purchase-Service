@@ -62,7 +62,8 @@ async def verify_and_update(purchase_data: dict, headers: dict, payload: dict, r
             'stocks': stock_infos.get('stocks', 0),
             'type': 'INCREMENT',
             "entity_name": 'PURCHASE',
-            "entity_id": purchase_data.get('ui_id') or purchase_data.get('invoice_no'),
+            "entity_id": purchase_data.get('ui_id') or purchase_data.get('purchase_ui_id'),
+            "purchase_ui_id": purchase_data.get('ui_id') or purchase_data.get('purchase_ui_id'),
             'create_stock_mov_adj': True
         })
 
@@ -228,6 +229,9 @@ class MessagingQueuePurchasegproducer:
                 else:
                     purchase_id = generate_uuid()
                     ui_id = await fetch_ui_id_from_utility(shop_id=shop_id)
+
+                purchase_data['ui_id'] = ui_id
+                purchase_data['purchase_id'] = purchase_id
 
                 product_res = datas.get("products") or []
                 shop_id = purchase_data.get("shop_id")
@@ -667,6 +671,7 @@ class MessagingQueuePurchasegproducer:
                     
                     try:
                         invoice_no = purchase_data.get("invoice_no") or ui_id or purchase_id
+                        effective_ui_id = ui_id or purchase_data.get("ui_id") or invoice_no
                         rabbitmq_msg_obj = RabbitMQMessagingConfig()
                         await rabbitmq_msg_obj.publish_event(
                             routing_key="activity_logs.routing.key",
@@ -677,9 +682,9 @@ class MessagingQueuePurchasegproducer:
                                 "service": "Purchase",
                                 "action": "CREATED",
                                 "entity_type": "PURCHASE",
-                                "entity_id": str(purchase_id),
+                                "entity_id": str(effective_ui_id),
                                 "entity_name": str(invoice_no),
-                                "description": f"Created Purchase {invoice_no} ({purchase_id})",
+                                "description": f"Created Purchase {invoice_no} ({effective_ui_id})",
                                 "changes": []
                             },
                             headers={}

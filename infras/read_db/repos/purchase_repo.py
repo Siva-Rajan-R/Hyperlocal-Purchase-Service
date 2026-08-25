@@ -67,6 +67,14 @@ class PurchaseReadDbRepo:
                 {"$set": purchase_data},
                 upsert=True
             )
+            import asyncio
+            asyncio.create_task(PurchaseStatsReadDbRepo.update_stats(purchase_data["shop_id"]))
+            if purchase_data.get("supplier") and purchase_data["supplier"].get("supplier_id"):
+                asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(purchase_data["shop_id"], purchase_data["supplier"]["supplier_id"]))
+            if existing_doc and existing_doc.get("supplier") and existing_doc["supplier"].get("supplier_id"):
+                old_sup_id = existing_doc["supplier"]["supplier_id"]
+                if old_sup_id != (purchase_data.get("supplier") or {}).get("supplier_id"):
+                    asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(purchase_data["shop_id"], old_sup_id))
         except Exception as e:
             ic(f"Error in update_purchase_with_history: {e}")
     
@@ -98,7 +106,7 @@ class PurchaseReadDbRepo:
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
-        ).skip(offset * data.limit).limit(data.limit)
+        ).sort([("created_at", -1), ("purchase_date", -1)]).skip(offset * data.limit).limit(data.limit)
         return await cursor.to_list(length=None)
 
     @staticmethod
@@ -132,7 +140,7 @@ class PurchaseReadDbRepo:
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
-        ).skip(offset * data.limit).limit(data.limit)
+        ).sort([("created_at", -1), ("purchase_date", -1)]).skip(offset * data.limit).limit(data.limit)
         return await cursor.to_list(length=None)
 
     @staticmethod
@@ -163,7 +171,7 @@ class PurchaseReadDbRepo:
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
-        ).skip((data.offset - 1) * data.limit).limit(data.limit)
+        ).sort([("created_at", -1), ("purchase_date", -1)]).skip((data.offset - 1) * data.limit).limit(data.limit)
         return await cursor.to_list(length=None)
 
     @staticmethod
@@ -180,7 +188,7 @@ class PurchaseReadDbRepo:
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
-        ).skip((data.offset - 1) * data.limit).limit(data.limit)
+        ).sort([("created_at", -1), ("purchase_date", -1)]).skip((data.offset - 1) * data.limit).limit(data.limit)
         return await cursor.to_list(length=None)
     
     # @staticmethod
@@ -296,7 +304,8 @@ class PurchaseReadDbRepo:
             return None
         query = {
             "shop_id": shop_id,
-            "invoice_no": invoice_no
+            "invoice_no": invoice_no,
+            "status": {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         }
         if supplier_id:
             query["supplier.supplier_id"] = supplier_id
@@ -308,7 +317,8 @@ class PurchaseReadDbRepo:
             return True
         query = {
             "shop_id": shop_id,
-            "invoice_no": invoice_no
+            "invoice_no": invoice_no,
+            "status": {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         }
         if exclude_purchase_id:
             query["purchase_id"] = {"$ne": exclude_purchase_id}

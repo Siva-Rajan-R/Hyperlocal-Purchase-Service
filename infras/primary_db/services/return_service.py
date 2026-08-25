@@ -142,11 +142,22 @@ class ReturnService:
                             detail=f"Cannot return {inc_quantity} units of '{item_name}' because current physical stock in inventory is only {physical_stock} units."
                         )
 
-                buy_price = target_item.get('buy_price', 0.0)
-                if not buy_price and isinstance(target_item.get('pricing_infos'), dict):
-                    buy_price = target_item['pricing_infos'].get('buy_price', 0.0)
+                buy_price = float(target_item.get('buy_price', 0.0) or (target_item.get('pricing_infos', {}).get('buy_price', 0.0) if isinstance(target_item.get('pricing_infos'), dict) else 0.0))
+                
+                # Check if purchase had EXCLUSIVE GST
+                item_gst = target_item.get('gst') or "0%"
+                gst_infos_val = read_db_purchase.get("gst_infos") or {}
+                gst_type = gst_infos_val.get("type", "EXCLUSIVE") if isinstance(gst_infos_val, dict) else "EXCLUSIVE"
+                
+                gst_rate = 0.0
+                if item_gst and isinstance(item_gst, str) and item_gst.endswith('%') and gst_type == "EXCLUSIVE":
+                    try:
+                        gst_rate = float(item_gst[:-1]) / 100.0
+                    except ValueError:
+                        pass
 
-                total_return_qty_amount = inc_quantity * float(buy_price or 0.0)
+                unit_cost_with_gst = buy_price * (1.0 + gst_rate)
+                total_return_qty_amount = inc_quantity * unit_cost_with_gst
 
                 founded_serialno = []
                 existing_serials = target_item.get('serial_numbers') or target_item.get('serialno_infos') or []

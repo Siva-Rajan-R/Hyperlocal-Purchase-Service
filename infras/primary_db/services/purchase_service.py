@@ -455,6 +455,7 @@ class PurchaseService:
             return False
 
         effective_id = requested_id if requested_id else generate_uuid()
+        ui_id = await fetch_ui_id_from_utility(shop_id=data.shop_id)
 
         saga_id: str = generate_uuid()
         steps = {
@@ -467,6 +468,7 @@ class PurchaseService:
         if effective_id:
             payload_data["id"] = effective_id
             data.id = effective_id
+        payload_data["ui_id"] = ui_id
 
         saga_data = {"purchase": payload_data, "executing_user_id": executing_user_id}
         await SagaProducer.emit(
@@ -551,7 +553,7 @@ class PurchaseService:
         old_payments_list = existing_read_doc_initial.get("payment_infos", []) if existing_read_doc_initial else []
         original_paid_amount = sum(float(p.get("amount", 0.0)) for p in old_payments_list)
 
-        effective_supplier_id = data.supplier_id or pur_get_res.supplier_id
+        effective_supplier_id = data.supplier_id if data.supplier_id else pur_get_res.supplier_id
         effective_invoice_no = data.invoice_no if data.invoice_no is not None else pur_get_res.invoice_no
         effective_pur_identifier = getattr(pur_get_res, "ui_id", None) or effective_invoice_no or data.id
 
@@ -1612,8 +1614,8 @@ class PurchaseService:
                 return 'v2'
         new_version = increment_version(old_version)
 
-        effective_supplier_id = data.supplier_id or pur_get_res.supplier_id
-        effective_invoice_no = data.invoice_no or pur_get_res.invoice_no
+        effective_supplier_id = data.supplier_id if data.supplier_id else pur_get_res.supplier_id
+        effective_invoice_no = data.invoice_no if data.invoice_no is not None else pur_get_res.invoice_no
         effective_status = data.status or pur_get_res.status
         effective_date = data.purchase_date or pur_get_res.date
 
@@ -1834,14 +1836,7 @@ class PurchaseService:
                 outstanding_status = "PARTIALY-PAID"
                 
             supplier_id = fresh_pur.supplier_id
-            old_supplier_id = original_supplier_id
-            old_supplier_name = original_supplier_name
-
-            if old_supplier_id and supplier_id == old_supplier_id and old_supplier_name and old_supplier_name != "Supplier":
-                supplier_name = old_supplier_name
-            else:
-                supplier_name = await get_supplier_name(fresh_pur.shop_id, supplier_id)
-                
+            supplier_name = await get_supplier_name(fresh_pur.shop_id, supplier_id)
             supplier_info = SupplierInfo(supplier_id=supplier_id, supplier_name=supplier_name)
             
             cf_dict = {}
@@ -1931,13 +1926,28 @@ class PurchaseService:
                     # 2. Add full new outstanding to new supplier
                     if new_outstanding > 0:
                         try:
+                            payment_method_str = "N/A"
+                            if payment_infos_dicts:
+                                last_pay = payment_infos_dicts[-1]
+                                payment_method_str = last_pay.get("mode") or last_pay.get("method") or "N/A"
+                                if hasattr(payment_method_str, "value"):
+                                    payment_method_str = payment_method_str.value
+
+                            invoice_ref = getattr(fresh_pur, "invoice_no", None) or fresh_pur.ui_id
                             new_supplier_payload = {
                                 "id": supplier_id,
                                 "shop_id": fresh_pur.shop_id,
                                 "outstanding_infos": {
                                     "amount": float(new_outstanding)
                                 },
-                                "type": "INCREMENT"
+                                "type": "INCREMENT",
+                                "entity_name": "purchase",
+                                "entity_id": fresh_pur.id,
+                                "invoice_no": str(getattr(fresh_pur, "invoice_no", None) or ""),
+                                "payment_method": str(payment_method_str),
+                                "cleared_amount": float(total_amount_paid),
+                                "outstanding_amount": float(new_outstanding),
+                                "notes": f"Purchase {invoice_ref} transferred from previous supplier"
                             }
                             await rabbitmq_msg_obj.publish_event(
                                 routing_key="suppliers.service.routing.key",
@@ -2161,6 +2171,7 @@ class PurchaseService:
                         "after": str(new_val) if new_val is not None else "None"
                     })
 
+            effective_ui_id = getattr(fresh_pur, 'ui_id', None) or getattr(data, 'ui_id', None) or str(data.id)
             await rabbitmq_msg_obj.publish_event(
                 routing_key="activity_logs.routing.key",
                 exchange_name="activity_logs.exchange",
@@ -2170,9 +2181,9 @@ class PurchaseService:
                     "service": "Purchase",
                     "action": "UPDATED",
                     "entity_type": "PURCHASE",
-                    "entity_id": str(data.id),
+                    "entity_id": str(effective_ui_id),
                     "entity_name": str(invoice_no),
-                    "description": f"Updated Purchase {invoice_no} ({data.id})",
+                    "description": f"Updated Purchase {invoice_no} ({effective_ui_id})",
                     "changes": changes
                 },
                 headers={}
@@ -2202,7 +2213,7 @@ class PurchaseService:
                         "entity_type": "PURCHASE",
                         "entity_id": str(data.id),
                         "entity_name": str(invoice_no),
-                        "description": f"Deleted Purchase {invoice_no} ({data.id})",
+                        "description": f"Deleted Purchase ({data.id})",
                         "changes": []
                     },
                     headers={}
