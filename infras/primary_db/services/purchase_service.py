@@ -1892,39 +1892,40 @@ class PurchaseService:
 
                 # Handle Supplier Transfer if Supplier ID Changed
                 if old_supplier_id and supplier_id and old_supplier_id != supplier_id:
-                    # 1. Reverse/remove outstanding from previous supplier
-                    if old_outstanding > 0:
-                        try:
-                            old_supplier_payload = {
-                                "id": old_supplier_id,
-                                "shop_id": fresh_pur.shop_id,
-                                "outstanding_infos": {
-                                    "amount": float(old_outstanding)
-                                },
-                                "type": "DECREMENT",
-                                "entity_name": "purchase",
-                                "entity_id": fresh_pur.id,
-                                "notes": "transferred outstanding to new supplier"
+                    # 1. Reverse/remove outstanding and clear history from previous supplier
+                    try:
+                        old_supplier_payload = {
+                            "id": old_supplier_id,
+                            "shop_id": fresh_pur.shop_id,
+                            "outstanding_infos": {
+                                "amount": float(old_outstanding)
+                            },
+                            "type": "DECREMENT",
+                            "entity_name": "purchase",
+                            "entity_id": fresh_pur.id,
+                            "invoice_no": effective_invoice_no,
+                            "clear_entity_history": True,
+                            "notes": "transferred outstanding to new supplier"
+                        }
+                        await rabbitmq_msg_obj.publish_event(
+                            routing_key="suppliers.service.routing.key",
+                            exchange_name="suppliers.service.exchange",
+                            payload=old_supplier_payload,
+                            headers={
+                                "entity_name": "update_supllier_outstanding",
+                                "service_name": "SUPPLIERS",
+                                "saga_id": "none",
+                                "reply_key": "none",
+                                "reply_exchange": "none",
+                                "reply_entity_name": "none",
+                                "body": old_supplier_payload
                             }
-                            await rabbitmq_msg_obj.publish_event(
-                                routing_key="suppliers.service.routing.key",
-                                exchange_name="suppliers.service.exchange",
-                                payload=old_supplier_payload,
-                                headers={
-                                    "entity_name": "update_supllier_outstanding",
-                                    "service_name": "SUPPLIERS",
-                                    "saga_id": "none",
-                                    "reply_key": "none",
-                                    "reply_exchange": "none",
-                                    "reply_entity_name": "none",
-                                    "body": old_supplier_payload
-                                }
-                            )
-                        except Exception as e:
-                            ic(f"Failed to publish old supplier outstanding decrement: {e}")
+                        )
+                    except Exception as e:
+                        ic(f"Failed to publish old supplier outstanding decrement: {e}")
 
-                    # 2. Add full new outstanding to new supplier
-                    if new_outstanding > 0:
+                    # 2. Add full new outstanding & payment history to new supplier
+                    if new_outstanding > 0 or total_amount_paid > 0:
                         try:
                             payment_method_str = "N/A"
                             if payment_infos_dicts:
