@@ -380,13 +380,16 @@ class MessagingQueuePurchasegproducer:
 
                             # Update transaction metadata
                             item_infos['total_pur_items'] += 1
-                            buy_price_val = float(pricing_infos.get('buy_price', 0))
-                            item_infos['total_pur_cost'] += buy_price_val*stocks
+                            item_pricing_payload = itm.get('pricing_infos') or {}
+                            buy_price_val = float(item_pricing_payload.get('buy_price') if isinstance(item_pricing_payload, dict) and item_pricing_payload.get('buy_price') is not None else (itm.get('buy_price') if itm.get('buy_price') is not None else pricing_infos.get('buy_price', 0)))
+                            sell_price_val = float(item_pricing_payload.get('sell_price') if isinstance(item_pricing_payload, dict) and item_pricing_payload.get('sell_price') is not None else (itm.get('sell_price') if itm.get('sell_price') is not None else pricing_infos.get('sell_price', 0)))
+                            item_infos['total_pur_cost'] += buy_price_val * stocks
                             
-                            if gst and gst.endswith('%') and gst_infos.get('type') == "EXCLUSIVE":
+                            effective_gst_type = str((gst_infos.get('type') if isinstance(gst_infos, dict) else getattr(gst_infos, 'type', '')) or calculation_infos.get('gst_type') or "EXCLUSIVE").upper()
+                            if gst and gst.endswith('%') and effective_gst_type == "EXCLUSIVE":
                                 try:
                                     gst_rate = float(gst[:-1]) / 100.0
-                                    item_infos['total_gst_amount'] += gst_rate * (buy_price_val*stocks)
+                                    item_infos['total_gst_amount'] += gst_rate * (buy_price_val * stocks)
                                 except ValueError:
                                     pass
                             
@@ -410,7 +413,7 @@ class MessagingQueuePurchasegproducer:
                                 purchase_id=purchase_id,
                                 purchase_item_id=pur_item_id,
                                 buy_price=buy_price_val,
-                                sell_price=float(pricing_infos.get('sell_price', 0))
+                                sell_price=sell_price_val
                             ))
                             
                             if (itm.get('storage_location_infos') or {}).get('name') or stl_infos.get('storage_location'):

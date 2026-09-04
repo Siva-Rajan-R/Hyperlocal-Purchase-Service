@@ -125,10 +125,37 @@ class MessagingQueuePurchaseReturnProducer:
                             }
                             existing_purchase["returns"].append(new_return)
 
+                            # Recalculate purchase outstanding & payment status after return
+                            total_cost = float(existing_purchase.get("total_cost") or 0.0)
+                            if total_cost == 0.0:
+                                item_infos = existing_purchase.get("item_infos") or {}
+                                total_cost = float(item_infos.get("total_pur_cost", 0.0) + item_infos.get("total_gst_amount", 0.0))
+                            
+                            all_refunds = sum(float(r.get("total_refund_amount") or 0.0) for r in existing_purchase.get("returns", []))
+                            paid_amount = sum(float(p.get("amount") or 0.0) for p in existing_purchase.get("payment_infos", []))
+                            
+                            net_cost = max(0.0, round(total_cost - all_refunds, 2))
+                            new_invoice_outstanding = max(0.0, round(net_cost - paid_amount, 2))
+                            
+                            existing_purchase["outstanding_amount"] = new_invoice_outstanding
+                            if new_invoice_outstanding == 0.0:
+                                existing_purchase["payment_status"] = "COMPLETED"
+                            elif paid_amount == 0.0:
+                                existing_purchase["payment_status"] = "NOT-PAID"
+                            else:
+                                existing_purchase["payment_status"] = "PARTIALY-PAID"
+
                             await PURCHAESE_COLLECTION.update_one(
                                 {"shop_id": shop_id, "$or": [{"purchase_id": purchase_id}, {"id": purchase_id}]},
                                 {"$set": existing_purchase}
                             )
+
+                            import asyncio
+                            from infras.read_db.repos.purchase_repo import PurchaseStatsReadDbRepo, SupplierStatsReadDbRepo
+                            asyncio.create_task(PurchaseStatsReadDbRepo.update_stats(shop_id))
+                            supplier_id = existing_purchase.get("supplier_id") or (existing_purchase.get("supplier") or {}).get("supplier_id")
+                            if supplier_id:
+                                asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(shop_id, supplier_id))
 
                         try:
                             rabbitmq_msg_obj = RabbitMQMessagingConfig()
@@ -175,10 +202,6 @@ class MessagingQueuePurchaseReturnProducer:
                                     if not pay_method:
                                         pay_method = "ON_CREDIT"
 
-                                    # Calculate invoice-level outstanding after the return
-                                    prev_invoice_outstanding = float(existing_purchase.get("outstanding_amount", 0.0))
-                                    new_invoice_outstanding = max(0.0, round(prev_invoice_outstanding - float(total_refund), 2))
-
                                     supplier_payload = {
                                         "shop_id": shop_id,
                                         "id": supplier_id,
@@ -188,7 +211,7 @@ class MessagingQueuePurchaseReturnProducer:
                                         "entity_id": str(return_toadd.get("id") or purchase_id),
                                         "invoice_no": str(invoice_no or ""),
                                         "payment_method": pay_method,
-                                        "cleared_amount": float(total_refund),
+                                        "cleared_amount": 0.0,
                                         "outstanding_amount": new_invoice_outstanding,
                                         "notes": f"Purchase return for invoice {invoice_no}. Refund amount: {float(total_refund)}"
                                     }
