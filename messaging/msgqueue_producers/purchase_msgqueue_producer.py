@@ -1,3 +1,4 @@
+from core.utils.user_context import get_activity_log_user_info
 from ..main import RabbitMQMessagingConfig
 from aio_pika import RobustConnection
 from icecream import ic
@@ -681,7 +682,7 @@ class MessagingQueuePurchasegproducer:
                             exchange_name="activity_logs.exchange",
                             payload={
                                 "shop_id": shop_id,
-                                "user_name": "Hyperlocal-User",
+                                **get_activity_log_user_info(),
                                 "service": "Purchase",
                                 "action": "CREATED",
                                 "entity_type": "PURCHASE",
