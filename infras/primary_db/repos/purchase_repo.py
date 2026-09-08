@@ -36,6 +36,8 @@ class PurchaseRepo:
             Purchase.calculation_infos,
             Purchase.payment_infos,
             Purchase.version,
+            Purchase.update_count,
+            Purchase.max_updates,
             Purchase.created_at,
             Purchase.updated_at
         )
@@ -115,9 +117,21 @@ class PurchaseRepo:
         if not data:
             return True
         for d in data:
-            val_dict = d.model_dump(mode="json", exclude_unset=True, exclude_none=True, exclude=['shop_id'])
+            val_dict = d.model_dump(mode="python", exclude_unset=True, exclude_none=True, exclude=['shop_id'])
             if "id" in val_dict:
                 p_id = val_dict.pop("id")
+                if "purchase_date" in val_dict and "date" not in val_dict:
+                    val_dict["date"] = val_dict.pop("purchase_date")
+                elif "purchase_date" in val_dict:
+                    val_dict.pop("purchase_date")
+
+                if "date" in val_dict and isinstance(val_dict["date"], str):
+                    from datetime import datetime
+                    try:
+                        val_dict["date"] = datetime.fromisoformat(val_dict["date"])
+                    except Exception:
+                        pass
+
                 stmt = (
                     update(Purchase)
                     .where(Purchase.id == p_id, Purchase.shop_id == d.shop_id)
@@ -557,6 +571,3 @@ class PurchaseRepo:
             for record in history_records
         ]
 
-
-    
-    

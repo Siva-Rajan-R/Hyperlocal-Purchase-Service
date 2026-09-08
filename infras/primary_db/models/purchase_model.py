@@ -1,6 +1,6 @@
 from ..main import BASE
 from sqlalchemy import (
-    Column, String, Float, Boolean, BigInteger,ARRAY,
+    Column, String, Float, Boolean, BigInteger, ARRAY, Integer,
     TIMESTAMP, func, ForeignKey, Identity
 )
 from sqlalchemy.orm import relationship
@@ -22,6 +22,8 @@ class Purchase(BASE):
     status = Column(String, nullable=False, default="COMPLETED")
     purchase_view = Column(Boolean, nullable=False)
     version = Column(String, nullable=False, default="v1")
+    update_count = Column(Integer, nullable=False, default=0)
+    max_updates = Column(Integer, nullable=False, default=1)
     gst_infos=Column(JSONB,nullable=False)
     calculation_infos = Column(JSONB, nullable=False)
     charges_infos = Column(JSONB, nullable=False)

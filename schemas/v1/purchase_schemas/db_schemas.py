@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional,List,Union
-from datetime import date
+from datetime import date, datetime
 from core.data_formats.enums.purchase_enums import PurchasePaymentMethods,PurchaseTypeEnums
 from .custom_types import PurchaseCalculationInfos,PurchaseChargeInfos,PurchaseItemInfos,PurchasePaymentInfos,PurchasePaymentMethods,PurchaseStorageLocationInfos,PurchasePricingInfos,PurchaseReorderPointInfosType,PurchaseBatchInfosType,PurchaseSerialnoInfosType,PurchaseStocksInfosType
 
@@ -89,6 +89,8 @@ class CreatePurchaseDbSchema(BaseModel):
     purchase_date:date
     invoice_no:Optional[str]=None
     version: Optional[str] = "v1"
+    update_count: Optional[int] = 0
+    max_updates: Optional[int] = 1
 
 
 
@@ -103,7 +105,10 @@ class UpdatePurchaseDbSchema(BaseModel):
     payment_infos:Optional[List[PurchasePaymentInfos]]=None
     item_infos:Optional[dict]=None
     purchase_date:Optional[date]=None
+    date:Optional[Union[date, datetime]]=None
     version:Optional[str]=None
+    update_count:Optional[int]=None
+    max_updates:Optional[int]=None
     
 
 

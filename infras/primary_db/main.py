@@ -21,6 +21,8 @@ async def init_inventory_pg_db():
             await conn.run_sync(BASE.metadata.create_all)
             await conn.execute(text("ALTER TABLE purchase ADD COLUMN IF NOT EXISTS version VARCHAR DEFAULT 'v1';"))
             await conn.execute(text("ALTER TABLE purchase ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'COMPLETED';"))
+            await conn.execute(text("ALTER TABLE purchase ADD COLUMN IF NOT EXISTS update_count INTEGER DEFAULT 0;"))
+            await conn.execute(text("ALTER TABLE purchase ADD COLUMN IF NOT EXISTS max_updates INTEGER DEFAULT 1;"))
             await conn.execute(text("ALTER TABLE purchase_items DROP COLUMN IF EXISTS serialno_id;"))
             await conn.execute(text("""
                 DO $$

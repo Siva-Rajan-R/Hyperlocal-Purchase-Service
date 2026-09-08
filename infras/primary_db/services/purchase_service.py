@@ -10,6 +10,7 @@ from hyperlocal_platform.core.enums.timezone_enum import TimeZoneEnum
 from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
 from schemas.v1.purchase_schemas.db_schemas import CreatePurchaseDbSchema,CreatePurchaseItemsDbSchema,CreatePurchasePricingDbSchema,CreateStorageLocationDbSchema,UpdatePurchaseDbSchema,UpdatePurchaseItemsDbSchema,UpdatePurchasePricingDbSchema,UpdateStorageLocationDbSchema,DeletePurchaseDbSchema,UpdateReorderPointDbSchema
 from schemas.v1.purchase_schemas.request_schema import CreatePurchaseItemsSchema,CreatePurchasePricingSchema,CreatePurchaseSchema,CreateStorageLocationSchema,UpdatePurchaseItemsSchema,UpdatePurchasePricingSchema,UpdatePurchaseSchema,UpdateStorageLocationSchema,DeletePurchaseSchema,PurchaseItemInfos,GetPurchaseByIdSchema,GetAllPurchaseSchemas,GetPurchaseByShopIdSchema,CancelPurchaseSchema
+import core.constants as const
 from core.errors.messaging_errors import BussinessError,FatalError,RetryableError
 from hyperlocal_platform.core.decorators.db_session_handler_dec import start_db_transaction
 from core.data_formats.enums.purchase_enums import PurchaseTypeEnums,PurchaseViewsEnums
@@ -102,6 +103,40 @@ def extract_sn_info(sn):
     elif hasattr(sn, "name"):
         return getattr(sn, "name", ""), getattr(sn, "id", None) or getattr(sn, "serialno_id", None)
     return str(sn), None
+
+def is_same_batch(b1, b2) -> bool:
+    if not b1 and not b2:
+        return True
+    if not b1 or not b2:
+        return False
+
+    b1_id = b1.get("id") if isinstance(b1, dict) else getattr(b1, "id", None)
+    b2_id = b2.get("id") if isinstance(b2, dict) else getattr(b2, "id", None)
+
+    b1_name = b1.get("name") if isinstance(b1, dict) else getattr(b1, "name", None)
+    b2_name = b2.get("name") if isinstance(b2, dict) else getattr(b2, "name", None)
+
+    s_b1_id = str(b1_id).strip() if b1_id and str(b1_id).strip() else None
+    s_b2_id = str(b2_id).strip() if b2_id and str(b2_id).strip() else None
+
+    s_b1_name = str(b1_name).strip().lower() if b1_name and str(b1_name).strip() else None
+    s_b2_name = str(b2_name).strip().lower() if b2_name and str(b2_name).strip() else None
+
+    if s_b1_id and s_b2_id:
+        return s_b1_id == s_b2_id
+
+    if s_b1_name and s_b2_name:
+        return s_b1_name == s_b2_name
+
+    if s_b1_id and s_b2_name and s_b1_id.lower() == s_b2_name:
+        return True
+    if s_b2_id and s_b1_name and s_b2_id.lower() == s_b1_name:
+        return True
+
+    if not s_b1_id and not s_b2_id and not s_b1_name and not s_b2_name:
+        return True
+
+    return False
 
 async def _send_activity_log(shop_id: str, action: str, entity_id: str, description: str, changes: list = None, entity_name: str = ""):
     try:
@@ -374,7 +409,9 @@ class PurchaseService:
             payment_infos=payment_infos_dict,
             date=datetime.datetime.combine(data.purchase_date, datetime.time.min),
             gst_infos=gst_dict,
-            version="v1"
+            version="v1",
+            update_count=0,
+            max_updates=const.PURCHASE_UPDATE_LIMIT
         )
 
         await self.purchase_repo_obj.create_bulk_purchase([purchase_model])
@@ -407,6 +444,9 @@ class PurchaseService:
             custom_fields=data.custom_fields or {},
             items=read_items,
             version="v1",
+            update_count=0,
+            max_updates=const.PURCHASE_UPDATE_LIMIT,
+            can_update=True,
             paid_amount=0.0
         )
 
@@ -549,6 +589,36 @@ class PurchaseService:
                     success=False
                 )
             )
+
+        # Check update limit against constant
+        current_update_count = getattr(pur_get_res, 'update_count', 0)
+        if current_update_count is None:
+            current_update_count = 0
+            old_ver = getattr(pur_get_res, 'version', 'v1') or 'v1'
+            if old_ver != 'v1' and str(old_ver).startswith('v'):
+                try:
+                    current_update_count = max(0, int(str(old_ver)[1:]) - 1)
+                except Exception:
+                    pass
+        elif current_update_count == 0:
+            if existing_read_doc_initial and existing_read_doc_initial.get("update_count"):
+                current_update_count = existing_read_doc_initial.get("update_count", 0)
+
+        if current_update_count >= const.PURCHASE_UPDATE_LIMIT:
+            from fastapi import HTTPException
+            from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+            raise HTTPException(
+                status_code=400,
+                detail=ErrorResponseTypDict(
+                    msg="Error : Updating Purchase",
+                    status_code=400,
+                    description=f"Purchase update limit reached. This purchase has already been updated {current_update_count} time(s) (Maximum allowed: {const.PURCHASE_UPDATE_LIMIT}).",
+                    success=False
+                )
+            )
+
+        new_update_count = current_update_count + 1
+
         original_outstanding = float(existing_read_doc_initial.get("outstanding_amount", 0.0)) if existing_read_doc_initial else 0.0
         original_supplier_name = existing_read_doc_initial.get("supplier", {}).get("supplier_name") if existing_read_doc_initial else None
         old_payments_list = existing_read_doc_initial.get("payment_infos", []) if existing_read_doc_initial else []
@@ -748,24 +818,21 @@ class PurchaseService:
             )
 
         # Prevent duplicate product/variant/batch combinations in update payload
-        product_variant_combos = []
-        for item in data.items:
-            batch_name = item.batch_infos.name if item.batch_infos else None
-            batch_id = item.batch_infos.id if item.batch_infos else None
-            combo = (item.product_id, item.variant_id, batch_name, batch_id)
-            if combo in product_variant_combos:
-                from fastapi import HTTPException
-                from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
-                raise HTTPException(
-                    status_code=400,
-                    detail=ErrorResponseTypDict(
-                        msg="Error : Updating Purchase",
-                        status_code=400,
-                        description="Duplicate products in purchase items are not allowed",
-                        success=False
-                    )
-                )
-            product_variant_combos.append(combo)
+        for i, item in enumerate(data.items):
+            for prev_item in data.items[:i]:
+                if prev_item.product_id == item.product_id and prev_item.variant_id == item.variant_id:
+                    if is_same_batch(prev_item.batch_infos, item.batch_infos):
+                        from fastapi import HTTPException
+                        from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
+                        raise HTTPException(
+                            status_code=400,
+                            detail=ErrorResponseTypDict(
+                                msg="Error : Updating Purchase",
+                                status_code=400,
+                                description="Duplicate product with same variant or batch id could not be added",
+                                success=False
+                            )
+                        )
 
         # Verify that all product IDs in payload actually exist in the database
         for item in data.items:
@@ -1629,7 +1696,11 @@ class PurchaseService:
             date=effective_date,
             item_infos=item_infos,
             version=new_version,
-            **data.model_dump(mode="json", exclude=['purchase_date', 'item_infos', 'id', 'shop_id', 'supplier_id', 'invoice_no', 'status'])
+            update_count=new_update_count,
+            max_updates=const.PURCHASE_UPDATE_LIMIT,
+            calculation_infos=data.calculation_infos,
+            charges_infos=data.charges_infos,
+            payment_infos=data.payment_infos,
         )
 
         pur_add_res=await purchase_repo_obj.update_bulk_purchase(data=[purchase_toadd])
@@ -1870,6 +1941,9 @@ class PurchaseService:
                 items=read_items,
                 item_infos=item_infos,
                 version=new_version,
+                update_count=new_update_count,
+                max_updates=const.PURCHASE_UPDATE_LIMIT,
+                can_update=(new_update_count < const.PURCHASE_UPDATE_LIMIT),
                 paid_amount=total_amount_paid
             )
             

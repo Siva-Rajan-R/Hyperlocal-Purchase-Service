@@ -2,6 +2,7 @@ from core.utils.user_context import get_activity_log_user_info
 from ..main import RabbitMQMessagingConfig
 from aio_pika import RobustConnection
 from icecream import ic
+from core.constants import PURCHASE_UPDATE_LIMIT
 from infras.primary_db.main import AsyncInventoryLocalSession
 from infras.primary_db.repos.purchase_repo import PurchaseRepo
 from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo
@@ -493,7 +494,9 @@ class MessagingQueuePurchasegproducer:
                         payment_infos=payment_infos,
                         date=purchase_date,
                         gst_infos=gst_infos,
-                        version="v1"
+                        version="v1",
+                        update_count=0,
+                        max_updates=PURCHASE_UPDATE_LIMIT
                     )
 
                     from sqlalchemy import update, select
@@ -591,11 +594,15 @@ class MessagingQueuePurchasegproducer:
                         custom_fields=cf_dict,
                         items=read_items,
                         version="v1",
+                        update_count=0,
+                        max_updates=PURCHASE_UPDATE_LIMIT,
+                        can_update=True,
                         history=[]
                     )
 
                     history_entry = {
                         "version": "v1",
+                        "update_count": 0,
                         "date": str(datetime.datetime.utcnow()),
                         "payload": purchase_read_model.model_dump(mode="json", exclude={"history"})
                     }

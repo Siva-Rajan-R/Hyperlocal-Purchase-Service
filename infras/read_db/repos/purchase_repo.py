@@ -44,22 +44,51 @@ class PurchaseReadDbRepo:
         return result
 
     @staticmethod
+    def _populate_limit_fields(doc: dict) -> dict:
+        if not doc or not isinstance(doc, dict):
+            return doc
+        import core.constants as const
+        if "update_count" not in doc:
+            ver = doc.get("version", "v1") or "v1"
+            cnt = 0
+            if ver != "v1" and str(ver).startswith("v"):
+                try:
+                    cnt = max(0, int(str(ver)[1:]) - 1)
+                except Exception:
+                    cnt = 0
+            doc["update_count"] = cnt
+        doc["max_updates"] = const.PURCHASE_UPDATE_LIMIT
+        doc["can_update"] = doc.get("update_count", 0) < const.PURCHASE_UPDATE_LIMIT
+        return doc
+
+    @staticmethod
     async def update_purchase_with_history(purchase_data: dict, new_version: str):
         try:
+            import core.constants as const
             existing_doc = await PURCHAESE_COLLECTION.find_one({"purchase_id": purchase_data["purchase_id"], "shop_id": purchase_data["shop_id"]})
             history = []
             if existing_doc:
                 history = existing_doc.get("history") or []
             
             import datetime
+            update_count = purchase_data.get("update_count")
+            if update_count is None:
+                update_count = len(history) + 1
+            max_updates = const.PURCHASE_UPDATE_LIMIT
+            can_update = update_count < const.PURCHASE_UPDATE_LIMIT
+
             history_entry = {
                 "version": new_version,
+                "update_count": update_count,
                 "date": str(datetime.datetime.utcnow()),
                 "payload": {k: v for k, v in purchase_data.items() if k != "history"}
             }
             history.append(history_entry)
             
             purchase_data["version"] = new_version
+            purchase_data["update_count"] = update_count
+            purchase_data["max_updates"] = max_updates
+            purchase_data["can_update"] = can_update
             purchase_data["history"] = history
             
             await PURCHAESE_COLLECTION.update_one(
@@ -107,7 +136,8 @@ class PurchaseReadDbRepo:
             query,
             {"_id": 0}
         ).sort([("created_at", -1), ("purchase_date", -1)]).skip(offset * data.limit).limit(data.limit)
-        return await cursor.to_list(length=None)
+        res = await cursor.to_list(length=None)
+        return [PurchaseReadDbRepo._populate_limit_fields(doc) for doc in res]
 
     @staticmethod
     async def get_by_shop_id(
@@ -141,7 +171,8 @@ class PurchaseReadDbRepo:
             query,
             {"_id": 0}
         ).sort([("created_at", -1), ("purchase_date", -1)]).skip(offset * data.limit).limit(data.limit)
-        return await cursor.to_list(length=None)
+        res = await cursor.to_list(length=None)
+        return [PurchaseReadDbRepo._populate_limit_fields(doc) for doc in res]
 
     @staticmethod
     async def get_by_id(
@@ -152,10 +183,11 @@ class PurchaseReadDbRepo:
             "$or": [{"purchase_id": data.id}, {"id": data.id}]
         }
 
-        return await PURCHAESE_COLLECTION.find_one(
+        doc = await PURCHAESE_COLLECTION.find_one(
             query,
             {"_id": 0}
         )
+        return PurchaseReadDbRepo._populate_limit_fields(doc) if doc else None
 
     @staticmethod
     async def get_by_product_id(
@@ -172,7 +204,8 @@ class PurchaseReadDbRepo:
             query,
             {"_id": 0}
         ).sort([("created_at", -1), ("purchase_date", -1)]).skip((data.offset - 1) * data.limit).limit(data.limit)
-        return await cursor.to_list(length=None)
+        res = await cursor.to_list(length=None)
+        return [PurchaseReadDbRepo._populate_limit_fields(doc) for doc in res]
 
     @staticmethod
     async def get_by_supplier_id(
@@ -189,7 +222,8 @@ class PurchaseReadDbRepo:
             query,
             {"_id": 0}
         ).sort([("created_at", -1), ("purchase_date", -1)]).skip((data.offset - 1) * data.limit).limit(data.limit)
-        return await cursor.to_list(length=None)
+        res = await cursor.to_list(length=None)
+        return [PurchaseReadDbRepo._populate_limit_fields(doc) for doc in res]
     
     # @staticmethod
     # async def get_all_purchases(data:GetPurchaseByShopIdSchema):

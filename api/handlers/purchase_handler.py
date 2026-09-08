@@ -19,6 +19,53 @@ from core.utils.validate_custom_fields import validate_and_filter_custom_fields
 from schemas.v1.request_schemas.customfield_schema import BulkCreateCustomFieldValuesSchema
 
 
+def is_same_batch(batch_a, batch_b) -> bool:
+    """
+    Checks if two batch definitions refer to the same batch.
+    Supports both Pydantic model instances and raw dicts.
+    """
+    if not batch_a and not batch_b:
+        return True
+    if not batch_a or not batch_b:
+        return False
+
+    def _get(b, key):
+        if isinstance(b, dict):
+            return b.get(key)
+        return getattr(b, key, None)
+
+    raw_id_a = _get(batch_a, "id")
+    raw_id_b = _get(batch_b, "id")
+    raw_name_a = _get(batch_a, "name")
+    raw_name_b = _get(batch_b, "name")
+
+    id_a = str(raw_id_a).strip() if raw_id_a and str(raw_id_a).strip() else None
+    id_b = str(raw_id_b).strip() if raw_id_b and str(raw_id_b).strip() else None
+
+    name_a = str(raw_name_a).strip().lower() if raw_name_a and str(raw_name_a).strip() else None
+    name_b = str(raw_name_b).strip().lower() if raw_name_b and str(raw_name_b).strip() else None
+
+    # Both have IDs
+    if id_a and id_b:
+        return id_a == id_b
+
+    # Both have names
+    if name_a and name_b:
+        return name_a == name_b
+
+    # Cross-match ID to Name
+    if id_a and name_b and id_a.lower() == name_b:
+        return True
+    if id_b and name_a and id_b.lower() == name_a:
+        return True
+
+    # Neither has ID or name
+    if not id_a and not id_b and not name_a and not name_b:
+        return True
+
+    return False
+
+
 class HandlePurchaseRequest:
     def __init__(self,session:AsyncSession):
         self.session=session
@@ -48,13 +95,11 @@ class HandlePurchaseRequest:
             else:
                 validated_data_info = validated_data[product_id]
                 inc_variant_id = item.variant_id
-                inc_batch_id = item.batch_infos.id if item.batch_infos else None
 
                 for inside_data in validated_data_info:
                     v_variant_id = inside_data.variant_id
-                    v_batch_id = inside_data.batch_infos.id if inside_data.batch_infos else None
 
-                    if v_variant_id == inc_variant_id and v_batch_id == inc_batch_id:
+                    if v_variant_id == inc_variant_id and is_same_batch(inside_data.batch_infos, item.batch_infos):
                         raise HTTPException(
                             status_code=400,
                             detail=ErrorResponseTypDict(

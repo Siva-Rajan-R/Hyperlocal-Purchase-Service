@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 from typing import Optional,List,Literal,Union
 from datetime import date
 from core.data_formats.enums.purchase_enums import PurchasePaymentMethods,PurchaseTypeEnums
@@ -84,6 +84,7 @@ class PurchaseGstInfos(BaseModel):
 
 # PURCHASES
 class CreatePurchaseSchema(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     id: Optional[str] = None
     shop_id: str
     supplier_id: str
@@ -97,11 +98,12 @@ class CreatePurchaseSchema(BaseModel):
     purchase_date: date
     items: List[CreatePurchaseItemsSchema]
     invoice_no: Optional[str] = None
-
+    max_updates: Optional[int] = Field(default=1, alias="update_limit")
     custom_fields: Optional[dict] = {}
 
 
 class UpdatePurchaseSchema(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     id: Optional[str] = None
     shop_id: str
     supplier_id: Optional[str] = None
@@ -113,8 +115,8 @@ class UpdatePurchaseSchema(BaseModel):
     payment_infos: Optional[List[PurchasePaymentInfos]] = None
     purchase_date: Optional[date] = None
     items: Optional[List[UpdatePurchaseItemsSchema]] = None
+    max_updates: Optional[int] = Field(default=None, alias="update_limit")
     custom_fields: Optional[dict] = {}
-
 
 
 class DeletePurchaseSchema(BaseModel):
