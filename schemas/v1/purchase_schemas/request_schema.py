@@ -140,6 +140,8 @@ class GetAllPurchaseSchemas(BaseModel):
     outstanding: Optional[bool] = None
     from_date: Optional[str] = None
     to_date: Optional[str] = None
+    exclude_cancle: Optional[bool] = None
+    exclude_cancel: Optional[bool] = None
 
 class GetPurchaseByShopIdSchema(BaseModel):
     limit: int = 10
@@ -152,6 +154,8 @@ class GetPurchaseByShopIdSchema(BaseModel):
     outstanding: Optional[bool] = None
     from_date: Optional[str] = None
     to_date: Optional[str] = None
+    exclude_cancle: Optional[bool] = None
+    exclude_cancel: Optional[bool] = None
 
 class GetPurchaseByIdSchema(BaseModel):
     id:str
@@ -163,6 +167,8 @@ class GetPurchaseByProductIdSchema(BaseModel):
     shop_id:str
     product_id:str
     outstanding: Optional[bool] = None
+    exclude_cancle: Optional[bool] = None
+    exclude_cancel: Optional[bool] = None
 
 class GetPurchaseBySupplierIdSchema(BaseModel):
     limit:int=10
@@ -170,6 +176,8 @@ class GetPurchaseBySupplierIdSchema(BaseModel):
     shop_id:str
     supplier_id:str
     outstanding: Optional[bool] = None
+    exclude_cancle: Optional[bool] = None
+    exclude_cancel: Optional[bool] = None
 
 class ClearPurchaseOutstandingSchema(BaseModel):
     purchase_id: str

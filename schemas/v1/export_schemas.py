@@ -12,6 +12,8 @@ class ExportDataRequestSchema(BaseModel):
     user_id: Optional[str] = Field(default=None, description="Requesting User ID for notification")
     status: Optional[str] = Field(default=None, description="Status filter")
     supplier_id: Optional[str] = Field(default=None, description="Supplier filter")
+    exclude_cancle: Optional[bool] = Field(default=None, description="Exclude canceled purchases")
+    exclude_cancel: Optional[bool] = Field(default=None, description="Exclude canceled purchases")
 
 class ExportJobResponseSchema(BaseModel):
     job_id: str

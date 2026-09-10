@@ -8,6 +8,15 @@ from schemas.v1.purchase_schemas.request_schema import GetAllPurchaseSchemas,Get
 
 
 
+def is_exclude_canceled(data) -> bool:
+    val = getattr(data, 'exclude_cancle', None)
+    if val is None:
+        val = getattr(data, 'exclude_cancel', None)
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "1", "yes")
+    return bool(val)
+
+
 class PurchaseReadDbRepo:
     @staticmethod
     async def create_purchase(purchase: PurchaseReadModel):
@@ -118,6 +127,12 @@ class PurchaseReadDbRepo:
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
             query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
+        elif is_exclude_canceled(data):
+            if "status" in query:
+                if isinstance(query["status"], str) and query["status"].upper() in ["CANCELED", "CANCELLED"]:
+                    query["status"] = {"$in": []}
+            else:
+                query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
         if search_q:
             regex = {"$regex": str(search_q).strip(), "$options": "i"}
@@ -153,6 +168,12 @@ class PurchaseReadDbRepo:
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
             query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
+        elif is_exclude_canceled(data):
+            if "status" in query:
+                if isinstance(query["status"], str) and query["status"].upper() in ["CANCELED", "CANCELLED"]:
+                    query["status"] = {"$in": []}
+            else:
+                query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
         if search_q:
             regex = {"$regex": str(search_q).strip(), "$options": "i"}
@@ -200,6 +221,8 @@ class PurchaseReadDbRepo:
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
             query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
+        elif is_exclude_canceled(data):
+            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
@@ -217,6 +240,8 @@ class PurchaseReadDbRepo:
         }
         if data.outstanding:
             query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
+            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
+        elif is_exclude_canceled(data):
             query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
         cursor = PURCHAESE_COLLECTION.find(
             query,

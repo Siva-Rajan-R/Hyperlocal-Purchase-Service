@@ -335,8 +335,15 @@ class PurchaseRepo:
         if getattr(data, 'status', None):
             conds.append(Purchase.status == data.status)
         
+        exclude_cancle = getattr(data, 'exclude_cancle', None)
+        if exclude_cancle is None:
+            exclude_cancle = getattr(data, 'exclude_cancel', None)
+        is_exclude_cancel = (str(exclude_cancle).strip().lower() in ("true", "1", "yes")) if isinstance(exclude_cancle, str) else bool(exclude_cancle)
+
         if getattr(data, 'outstanding', None):
             conds.append(Purchase.payment_status.notin_(["completed", "COMPLETED", "Completed"]))
+            conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
+        elif is_exclude_cancel:
             conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
 
         stmt = (
@@ -412,8 +419,15 @@ class PurchaseRepo:
         if getattr(data, 'status', None):
             conds.append(Purchase.status == data.status)
 
+        exclude_cancle = getattr(data, 'exclude_cancle', None)
+        if exclude_cancle is None:
+            exclude_cancle = getattr(data, 'exclude_cancel', None)
+        is_exclude_cancel = (str(exclude_cancle).strip().lower() in ("true", "1", "yes")) if isinstance(exclude_cancle, str) else bool(exclude_cancle)
+
         if getattr(data, 'outstanding', None):
             conds.append(Purchase.payment_status.notin_(["completed", "COMPLETED", "Completed"]))
+            conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
+        elif is_exclude_cancel:
             conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
 
         stmt = (

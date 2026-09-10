@@ -24,6 +24,9 @@ async def process_purchase_export(payload: dict) -> dict:
     user_id = payload.get("user_id")
     status = payload.get("status")
     supplier_id = payload.get("supplier_id")
+    exclude_cancle = payload.get("exclude_cancle")
+    if exclude_cancle is None:
+        exclude_cancle = payload.get("exclude_cancel")
 
     limit = max(to_record - from_record + 1, 1)
     offset = from_record
@@ -56,7 +59,8 @@ async def process_purchase_export(payload: dict) -> dict:
                 from_date=from_date,
                 to_date=to_date,
                 status=status,
-                supplier_id=supplier_id
+                supplier_id=supplier_id,
+                exclude_cancle=exclude_cancle
             )
             purchases = await repo.get_purchase_by_shop_id(data=fetch_schema)
 
