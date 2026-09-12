@@ -2393,9 +2393,9 @@ class PurchaseService:
             )
             await self.session.execute(stmt)
 
-            await PURCHAESE_COLLECTION.update_one(
+            await PURCHAESE_COLLECTION.update_many(
                 {"$or": [{"purchase_id": purchase_id}, {"id": purchase_id}], "shop_id": shop_id},
-                {"$set": {"status": "CANCELED", "payment_status": "CANCELED"}}
+                {"$set": {"status": "CANCELED", "payment_status": "CANCELED", "outstanding_amount": 0.0, "can_update": False}}
             )
 
             await _send_activity_log(
@@ -2629,9 +2629,9 @@ class PurchaseService:
         await self.session.commit()
 
         # Update Read DB Mongo status
-        await PURCHAESE_COLLECTION.update_one(
+        await PURCHAESE_COLLECTION.update_many(
             {"$or": [{"purchase_id": purchase_id}, {"id": purchase_id}], "shop_id": shop_id},
-            {"$set": {"status": "CANCELED", "payment_status": "CANCELED"}}
+            {"$set": {"status": "CANCELED", "payment_status": "CANCELED", "outstanding_amount": 0.0, "can_update": False}}
         )
 
         if supplier_id and outstanding_amount > 0:

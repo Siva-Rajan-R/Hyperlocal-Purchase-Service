@@ -68,6 +68,9 @@ class PurchaseReadDbRepo:
             doc["update_count"] = cnt
         doc["max_updates"] = const.PURCHASE_UPDATE_LIMIT
         doc["can_update"] = doc.get("update_count", 0) < const.PURCHASE_UPDATE_LIMIT
+        if str(doc.get("status", "")).upper() in ("CANCELED", "CANCELLED"):
+            doc["payment_status"] = "CANCELED"
+            doc["can_update"] = False
         return doc
 
     @staticmethod
@@ -410,7 +413,7 @@ class PurchaseStatsReadDbRepo:
     async def update_stats(shop_id: str):
         try:
             pipeline = [
-                {"$match": {"shop_id": shop_id, "status": {"$ne": "DRAFT"}}},
+                {"$match": {"shop_id": shop_id, "status": {"$nin": ["DRAFT", "CANCELED", "canceled", "CANCELLED", "cancelled"]}}},
                 {
                     "$group": {
                         "_id": None,
@@ -475,7 +478,7 @@ class SupplierStatsReadDbRepo:
     async def update_supplier_stats(shop_id: str, supplier_id: str):
         try:
             pipeline = [
-                {"$match": {"shop_id": shop_id, "supplier.supplier_id": supplier_id, "status": {"$ne": "DRAFT"}}},
+                {"$match": {"shop_id": shop_id, "supplier.supplier_id": supplier_id, "status": {"$nin": ["DRAFT", "CANCELED", "canceled", "CANCELLED", "cancelled"]}}},
                 {
                     "$group": {
                         "_id": None,

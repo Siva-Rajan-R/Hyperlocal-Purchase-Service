@@ -117,7 +117,18 @@ def test_schema_and_models():
     assert p_read.notes == test_notes
     read_dumped = p_read.model_dump(mode="json")
     assert read_dumped["notes"] == test_notes
-    print("[PASS] PurchaseReadModel validated with notes")
+    # 6. Test PurchaseReadDbRepo._populate_limit_fields on canceled purchase
+    from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo
+    test_doc = {
+        "purchase_id": "pur-test-cancel",
+        "status": "CANCELED",
+        "payment_status": "NOT-PAID",
+        "outstanding_amount": 169.92
+    }
+    populated = PurchaseReadDbRepo._populate_limit_fields(test_doc)
+    assert populated["payment_status"] == "CANCELED"
+    assert populated["can_update"] is False
+    print("[PASS] Canceled purchase sets payment_status to CANCELED and can_update to False")
 
     print("\nALL SCHEMA & MODEL VALIDATION TESTS PASSED SUCCESSFULLY!")
 
