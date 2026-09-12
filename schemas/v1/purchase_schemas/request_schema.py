@@ -98,6 +98,7 @@ class CreatePurchaseSchema(BaseModel):
     purchase_date: date
     items: List[CreatePurchaseItemsSchema]
     invoice_no: Optional[str] = None
+    notes: Optional[str] = None
     max_updates: Optional[int] = Field(default=1, alias="update_limit")
     custom_fields: Optional[dict] = {}
 
@@ -109,6 +110,7 @@ class UpdatePurchaseSchema(BaseModel):
     supplier_id: Optional[str] = None
     status: Optional[str] = None
     invoice_no: Optional[str] = None
+    notes: Optional[str] = None
     calculation_infos: Optional[PurchaseCalculationInfos] = None
 
     charges_infos: Optional[PurchaseChargeInfos] = None

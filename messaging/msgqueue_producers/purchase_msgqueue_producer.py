@@ -244,6 +244,7 @@ class MessagingQueuePurchasegproducer:
                 payment_infos = purchase_data.get("payment_infos") or []
                 purchase_date_raw = purchase_data.get("purchase_date")
                 invoice_no = purchase_data.get("invoice_no")
+                notes = purchase_data.get("notes")
                 gst_infos = purchase_data.get("gst_infos") or {}
 
                 item_infos = {
@@ -485,6 +486,7 @@ class MessagingQueuePurchasegproducer:
                         shop_id=shop_id,
                         supplier_id=supplier_id,
                         invoice_no=invoice_no,
+                        notes=notes,
                         type=pur_type,
                         status="COMPLETED",
                         purchase_view=True,
@@ -509,6 +511,7 @@ class MessagingQueuePurchasegproducer:
                             .values(
                                 supplier_id=supplier_id,
                                 invoice_no=invoice_no,
+                                notes=notes,
                                 type=pur_type,
                                 status="COMPLETED",
                                 purchase_view=True,
@@ -580,6 +583,7 @@ class MessagingQueuePurchasegproducer:
                         purchase_id=purchase_id,
                         ui_id=ui_id,
                         invoice_no=invoice_no,
+                        notes=notes,
                         shop_id=shop_id,
                         purchase_date=purchase_date,
                         status="COMPLETED",

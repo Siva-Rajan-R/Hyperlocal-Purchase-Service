@@ -88,6 +88,7 @@ class CreatePurchaseDbSchema(BaseModel):
     
     purchase_date:date
     invoice_no:Optional[str]=None
+    notes:Optional[str]=None
     version: Optional[str] = "v1"
     update_count: Optional[int] = 0
     max_updates: Optional[int] = 1
@@ -100,6 +101,7 @@ class UpdatePurchaseDbSchema(BaseModel):
     supplier_id:Optional[str]=None
     status:Optional[str]=None
     invoice_no:Optional[str]=None
+    notes:Optional[str]=None
     calculation_infos:Optional[PurchaseCalculationInfos]=None
     charges_infos:Optional[PurchaseChargeInfos]=None
     payment_infos:Optional[List[PurchasePaymentInfos]]=None

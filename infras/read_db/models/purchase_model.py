@@ -67,6 +67,7 @@ class PurchaseReadModel(BaseModel):
 
     purchase_date: datetime
     status: str = "COMPLETED"
+    notes: Optional[str] = None
 
     supplier: SupplierInfo
 

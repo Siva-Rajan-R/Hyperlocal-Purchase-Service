@@ -17,6 +17,7 @@ class Purchase(BASE):
     shop_id = Column(String, nullable=False)
     supplier_id = Column(String, nullable=False)
     invoice_no=Column(String)
+    notes = Column(String, nullable=True)
 
     type = Column(String, nullable=False)
     status = Column(String, nullable=False, default="COMPLETED")

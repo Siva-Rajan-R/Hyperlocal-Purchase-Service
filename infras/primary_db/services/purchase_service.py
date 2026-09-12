@@ -400,6 +400,7 @@ class PurchaseService:
             shop_id=shop_id,
             supplier_id=supplier_id,
             invoice_no=data.invoice_no,
+            notes=data.notes,
             type=pur_type_val,
             status="DRAFT",
             purchase_view=True,
@@ -430,6 +431,7 @@ class PurchaseService:
             purchase_id=purchase_id,
             ui_id=ui_id,
             invoice_no=data.invoice_no or ui_id,
+            notes=data.notes,
             shop_id=shop_id,
             purchase_date=datetime.datetime.combine(data.purchase_date, datetime.time.min),
             status="DRAFT",
@@ -1684,6 +1686,7 @@ class PurchaseService:
 
         effective_supplier_id = data.supplier_id if data.supplier_id else pur_get_res.supplier_id
         effective_invoice_no = data.invoice_no if data.invoice_no is not None else pur_get_res.invoice_no
+        effective_notes = data.notes if data.notes is not None else getattr(pur_get_res, 'notes', None)
         effective_status = data.status or pur_get_res.status
         effective_date = data.purchase_date or pur_get_res.date
 
@@ -1692,6 +1695,7 @@ class PurchaseService:
             shop_id=data.shop_id,
             supplier_id=effective_supplier_id,
             invoice_no=effective_invoice_no,
+            notes=effective_notes,
             status=effective_status,
             date=effective_date,
             item_infos=item_infos,
@@ -1925,6 +1929,7 @@ class PurchaseService:
                 purchase_id=fresh_pur.id,
                 ui_id=fresh_pur.ui_id,
                 invoice_no=fresh_pur.invoice_no or "",
+                notes=getattr(fresh_pur, 'notes', None) or effective_notes,
                 shop_id=fresh_pur.shop_id,
                 purchase_date=fresh_pur.date,
                 supplier=supplier_info,
@@ -2390,7 +2395,7 @@ class PurchaseService:
 
             await PURCHAESE_COLLECTION.update_one(
                 {"$or": [{"purchase_id": purchase_id}, {"id": purchase_id}], "shop_id": shop_id},
-                {"$set": {"status": "CANCELED"}}
+                {"$set": {"status": "CANCELED", "payment_status": "CANCELED"}}
             )
 
             await _send_activity_log(
@@ -2405,6 +2410,7 @@ class PurchaseService:
                 "success": True,
                 "id": purchase_id,
                 "status": "CANCELED",
+                "payment_status": "CANCELED",
                 "msg": "Draft purchase canceled successfully"
             }
 
@@ -2460,7 +2466,7 @@ class PurchaseService:
         cursor = prod_inv_collection.find({"id": {"$in": list(product_ids)}, "shop_id": shop_id})
         product_docs = {doc["id"]: doc async for doc in cursor}
 
-        # Check physical stock availability for ALL items before making changes
+        # Check physical and available stock availability for ALL items before making changes
         for proc_item in items_to_process:
             qty_to_revert = proc_item["qty_to_revert"]
             if qty_to_revert <= 0:
@@ -2470,6 +2476,7 @@ class PurchaseService:
             v_id = proc_item["variant_id"]
             b_id = proc_item["batch_id"]
             item_name = proc_item["name"]
+            purchased_qty = proc_item["purchased_qty"]
 
             prod_doc = product_docs.get(p_id) or {}
             type_infos = prod_doc.get("type_infos") or {}
@@ -2477,36 +2484,71 @@ class PurchaseService:
             has_variant = type_infos.get("has_variant") if type_infos and "has_variant" in type_infos else prod_doc.get("has_variant", False)
 
             target_stock_infos = {}
-            if has_variant and v_id:
-                variants = prod_doc.get("variants") or {}
-                variant_data = {}
-                if isinstance(variants, dict):
-                    variant_data = variants.get(v_id) or {}
-                elif isinstance(variants, list):
-                    variant_data = next((v for v in variants if isinstance(v, dict) and v.get("id") == v_id), {})
-                
-                if has_batch and b_id:
-                    batches = variant_data.get("batch_infos") or []
+            if prod_doc.get("inventory_units") and isinstance(prod_doc.get("inventory_units"), list):
+                for unit in prod_doc["inventory_units"]:
+                    if not isinstance(unit, dict):
+                        continue
+                    u_v_id = (unit.get("variant_infos") or {}).get("id") if isinstance(unit.get("variant_infos"), dict) else None
+                    u_b_id = (unit.get("batch_infos") or {}).get("id") if isinstance(unit.get("batch_infos"), dict) else None
+                    
+                    if v_id and b_id:
+                        if u_v_id == v_id and u_b_id == b_id:
+                            target_stock_infos = unit.get("stock_infos") or unit.get("stocks_infos") or {}
+                            break
+                    elif v_id:
+                        if u_v_id == v_id:
+                            target_stock_infos = unit.get("stock_infos") or unit.get("stocks_infos") or {}
+                            break
+                    elif b_id:
+                        if u_b_id == b_id:
+                            target_stock_infos = unit.get("stock_infos") or unit.get("stocks_infos") or {}
+                            break
+                    else:
+                        target_stock_infos = unit.get("stock_infos") or unit.get("stocks_infos") or {}
+                        break
+
+            if not target_stock_infos:
+                if has_variant and v_id:
+                    variants = prod_doc.get("variants") or {}
+                    variant_data = {}
+                    if isinstance(variants, dict):
+                        variant_data = variants.get(v_id) or {}
+                    elif isinstance(variants, list):
+                        variant_data = next((v for v in variants if isinstance(v, dict) and v.get("id") == v_id), {})
+                    
+                    if has_batch and b_id:
+                        batches = variant_data.get("batch_infos") or []
+                        matched_b = next((b for b in batches if isinstance(b, dict) and (b.get("id") == b_id or b.get("name") == b_id)), {})
+                        target_stock_infos = matched_b.get("stock_infos") or matched_b.get("stocks_infos") or {}
+                    else:
+                        target_stock_infos = variant_data.get("stock_infos") or variant_data.get("stocks_infos") or {}
+                elif has_batch and b_id:
+                    batches = prod_doc.get("batch_infos") or []
                     matched_b = next((b for b in batches if isinstance(b, dict) and (b.get("id") == b_id or b.get("name") == b_id)), {})
                     target_stock_infos = matched_b.get("stock_infos") or matched_b.get("stocks_infos") or {}
                 else:
-                    target_stock_infos = variant_data.get("stock_infos") or variant_data.get("stocks_infos") or {}
-            elif has_batch and b_id:
-                batches = prod_doc.get("batch_infos") or []
-                matched_b = next((b for b in batches if isinstance(b, dict) and (b.get("id") == b_id or b.get("name") == b_id)), {})
-                target_stock_infos = matched_b.get("stock_infos") or matched_b.get("stocks_infos") or {}
-            else:
-                target_stock_infos = prod_doc.get("stock_infos") or prod_doc.get("stocks_infos") or {}
+                    target_stock_infos = prod_doc.get("stock_infos") or prod_doc.get("stocks_infos") or {}
 
-            physical_stock = float(target_stock_infos.get("physical_stocks") if target_stock_infos.get("physical_stocks") is not None else (target_stock_infos.get("stocks") or 0.0))
+            physical_stock = float(
+                target_stock_infos.get("physical_stocks")
+                if target_stock_infos.get("physical_stocks") is not None
+                else (target_stock_infos.get("physical_Stocks") if target_stock_infos.get("physical_Stocks") is not None else (target_stock_infos.get("stocks") if target_stock_infos.get("stocks") is not None else (prod_doc.get("stocks") or 0.0)))
+            )
+            available_stock = float(
+                target_stock_infos.get("available_stocks")
+                if target_stock_infos.get("available_stocks") is not None
+                else (target_stock_infos.get("available_Stocks") if target_stock_infos.get("available_Stocks") is not None else physical_stock)
+            )
 
-            if physical_stock < qty_to_revert:
+            current_stock = min(physical_stock, available_stock)
+
+            if current_stock < qty_to_revert:
                 raise HTTPException(
                     status_code=400,
                     detail=ErrorResponseTypDict(
                         msg="Error : Canceling Purchase",
                         status_code=400,
-                        description=f"Cannot cancel purchase because current physical stock for product '{item_name}' ({physical_stock}) is less than the purchased stock ({qty_to_revert}) required to revert.",
+                        description=f"Cannot cancel purchase because current available stock for product '{item_name}' ({current_stock}) is less than the purchased quantity ({qty_to_revert}). Available stock must be greater than or equal to {qty_to_revert} to cancel.",
                         success=False
                     )
                 )
@@ -2589,7 +2631,7 @@ class PurchaseService:
         # Update Read DB Mongo status
         await PURCHAESE_COLLECTION.update_one(
             {"$or": [{"purchase_id": purchase_id}, {"id": purchase_id}], "shop_id": shop_id},
-            {"$set": {"status": "CANCELED"}}
+            {"$set": {"status": "CANCELED", "payment_status": "CANCELED"}}
         )
 
         if supplier_id and outstanding_amount > 0:
@@ -2730,6 +2772,7 @@ class PurchaseService:
             "success": True,
             "id": purchase_id,
             "status": "CANCELED",
+            "payment_status": "CANCELED",
             "msg": "Purchase canceled successfully"
         }
 
