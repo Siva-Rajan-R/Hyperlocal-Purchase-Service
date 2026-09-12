@@ -1,11 +1,16 @@
 from models.repo_models.base_repo_model import BaseRepoModel
 from models.service_models.base_service_model import BaseServiceModel
-from sqlalchemy import select,update,delete,func,or_,and_,String,case,literal,literal_column,bindparam
+from sqlalchemy import select,update,delete,func,or_,and_,String,case,literal,literal_column,bindparam,exists,not_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload,load_only
-from ..models.purchase_model import Purchase,PurchaseItems,PurchaseItemsPricing,PurchaseItemsStoragelocation,PurchaseItemsReorderPoint
+from ..models.purchase_model import Purchase,PurchaseItems,PurchaseItemsPricing,PurchaseItemsStoragelocation,PurchaseItemsReorderPoint,PurchaseReturns
 from schemas.v1.purchase_schemas.db_schemas import CreatePurchaseDbSchema,CreatePurchaseItemsDbSchema,UpdatePurchaseDbSchema,UpdatePurchaseItemsDbSchema,DeletePurchaseDbSchema,CreatePurchasePricingDbSchema,CreateStorageLocationDbSchema,UpdatePurchasePricingDbSchema,UpdateStorageLocationDbSchema,UpdateReorderPointDbSchema,CreateReorderPointDbSchema
 from schemas.v1.purchase_schemas.request_schema import GetAllPurchaseSchemas,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema
+from ..read_db.repos.purchase_repo import (
+    is_exclude_canceled, is_exclude_draft, is_exclude_not_paid, is_exclude_paid,
+    is_exclude_partial_paid, is_exclude_outstanding, is_exclude_non_outstanding,
+    is_exclude_return, is_exclude_non_return
+)
 from sqlalchemy.dialects.postgresql import insert
 from hyperlocal_platform.core.decorators.db_session_handler_dec import start_db_transaction
 from hyperlocal_platform.core.enums.timezone_enum import TimeZoneEnum
@@ -335,16 +340,22 @@ class PurchaseRepo:
         if getattr(data, 'status', None):
             conds.append(Purchase.status == data.status)
         
-        exclude_cancle = getattr(data, 'exclude_cancle', None)
-        if exclude_cancle is None:
-            exclude_cancle = getattr(data, 'exclude_cancel', None)
-        is_exclude_cancel = (str(exclude_cancle).strip().lower() in ("true", "1", "yes")) if isinstance(exclude_cancle, str) else bool(exclude_cancle)
+        status_nin = []
+        if is_exclude_canceled(data) or getattr(data, 'outstanding', None) or is_exclude_non_outstanding(data):
+            status_nin.extend(["CANCELED", "canceled", "CANCELLED", "cancelled"])
+        if is_exclude_draft(data):
+            status_nin.extend(["DRAFT", "draft", "Draft"])
+        if status_nin:
+            conds.append(Purchase.status.notin_(list(set(status_nin))))
 
-        if getattr(data, 'outstanding', None):
-            conds.append(Purchase.payment_status.notin_(["completed", "COMPLETED", "Completed"]))
-            conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
-        elif is_exclude_cancel:
-            conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
+        ex_ret = is_exclude_return(data)
+        ex_non_ret = is_exclude_non_return(data)
+        if ex_ret and ex_non_ret:
+            conds.append(literal(False))
+        elif ex_ret:
+            conds.append(not_(exists(select(1).where(PurchaseReturns.purchase_id == Purchase.id))))
+        elif ex_non_ret:
+            conds.append(exists(select(1).where(PurchaseReturns.purchase_id == Purchase.id)))
 
         stmt = (
             select(Purchase)
@@ -419,16 +430,22 @@ class PurchaseRepo:
         if getattr(data, 'status', None):
             conds.append(Purchase.status == data.status)
 
-        exclude_cancle = getattr(data, 'exclude_cancle', None)
-        if exclude_cancle is None:
-            exclude_cancle = getattr(data, 'exclude_cancel', None)
-        is_exclude_cancel = (str(exclude_cancle).strip().lower() in ("true", "1", "yes")) if isinstance(exclude_cancle, str) else bool(exclude_cancle)
+        status_nin_shop = []
+        if is_exclude_canceled(data) or getattr(data, 'outstanding', None) or is_exclude_non_outstanding(data):
+            status_nin_shop.extend(["CANCELED", "canceled", "CANCELLED", "cancelled"])
+        if is_exclude_draft(data):
+            status_nin_shop.extend(["DRAFT", "draft", "Draft"])
+        if status_nin_shop:
+            conds.append(Purchase.status.notin_(list(set(status_nin_shop))))
 
-        if getattr(data, 'outstanding', None):
-            conds.append(Purchase.payment_status.notin_(["completed", "COMPLETED", "Completed"]))
-            conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
-        elif is_exclude_cancel:
-            conds.append(Purchase.status.notin_(["CANCELED", "canceled", "CANCELLED", "cancelled"]))
+        ex_ret_shop = is_exclude_return(data)
+        ex_non_ret_shop = is_exclude_non_return(data)
+        if ex_ret_shop and ex_non_ret_shop:
+            conds.append(literal(False))
+        elif ex_ret_shop:
+            conds.append(not_(exists(select(1).where(PurchaseReturns.purchase_id == Purchase.id))))
+        elif ex_non_ret_shop:
+            conds.append(exists(select(1).where(PurchaseReturns.purchase_id == Purchase.id)))
 
         stmt = (
             select(Purchase)

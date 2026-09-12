@@ -24,10 +24,6 @@ async def process_purchase_export(payload: dict) -> dict:
     user_id = payload.get("user_id")
     status = payload.get("status")
     supplier_id = payload.get("supplier_id")
-    exclude_cancle = payload.get("exclude_cancle")
-    if exclude_cancle is None:
-        exclude_cancle = payload.get("exclude_cancel")
-
     limit = max(to_record - from_record + 1, 1)
     offset = from_record
 
@@ -60,7 +56,15 @@ async def process_purchase_export(payload: dict) -> dict:
                 to_date=to_date,
                 status=status,
                 supplier_id=supplier_id,
-                exclude_cancle=exclude_cancle
+                exclude_cancel=payload.get("exclude_cancel") or payload.get("exclude_cancle") or payload.get("exclude_canceled") or payload.get("exclude_cancelled"),
+                exclude_draft=payload.get("exclude_draft") or payload.get("exclude_drafts"),
+                exclude_not_paid=payload.get("exclude_not_paid") or payload.get("exclude_unpaid"),
+                exclude_paid=payload.get("exclude_paid") or payload.get("exclude_completed_payment"),
+                exclude_partial_paid=payload.get("exclude_partial_paid") or payload.get("exclude_partially_paid"),
+                exclude_outstanding=payload.get("exclude_outstanding") or payload.get("exclude_outstading"),
+                exclude_non_outstanding=payload.get("exclude_non_outstanding") or payload.get("exclude_non_outstating"),
+                exclude_return=payload.get("exclude_return") or payload.get("exclude_returns"),
+                exclude_non_return=payload.get("exclude_non_return") or payload.get("exclude_non_returns")
             )
             purchases = await repo.get_purchase_by_shop_id(data=fetch_schema)
 

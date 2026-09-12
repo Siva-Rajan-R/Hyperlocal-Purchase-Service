@@ -8,13 +8,164 @@ from schemas.v1.purchase_schemas.request_schema import GetAllPurchaseSchemas,Get
 
 
 
+def _check_filter(data, attrs: tuple) -> bool:
+    for attr in attrs:
+        val = getattr(data, attr, None)
+        if val is not None:
+            if isinstance(val, str):
+                return val.strip().lower() in ("true", "1", "yes")
+            return bool(val)
+    return False
+
 def is_exclude_canceled(data) -> bool:
-    val = getattr(data, 'exclude_cancle', None)
-    if val is None:
-        val = getattr(data, 'exclude_cancel', None)
-    if isinstance(val, str):
-        return val.strip().lower() in ("true", "1", "yes")
-    return bool(val)
+    return _check_filter(data, (
+        'exclude_cancle', 'exclude_cancel', 'exclude_canceled', 'exclude_cancelled',
+        'exclude_canceled_purchase', 'exclude_canceled_purchases', 'exclude_cancelled_purchases'
+    ))
+
+def is_exclude_draft(data) -> bool:
+    return _check_filter(data, (
+        'exclude_draft', 'exclude_drafts', 'exclude_draft_purchase', 'exclude_draft_purchases'
+    ))
+
+def is_exclude_not_paid(data) -> bool:
+    return _check_filter(data, (
+        'exclude_not_paid', 'exclude_unpaid', 'exclude_notpaid',
+        'exclude_unpaid_purchase', 'exclude_unpaid_purchases',
+        'exclude_not_paid_purchase', 'exclude_not_paid_purchases'
+    ))
+
+def is_exclude_paid(data) -> bool:
+    return _check_filter(data, (
+        'exclude_paid', 'exclude_completed_payment', 'exclude_paid_purchase',
+        'exclude_paid_purchases', 'exclude_completed_purchase'
+    ))
+
+def is_exclude_partial_paid(data) -> bool:
+    return _check_filter(data, (
+        'exclude_partial_paid', 'exclude_partially_paid', 'exclude_partial',
+        'exclude_partially', 'exclude_partial_paid_purchase', 'exclude_partially_paid_purchases'
+    ))
+
+def is_exclude_outstanding(data) -> bool:
+    return _check_filter(data, (
+        'exclude_outstanding', 'exclude_outstading', 'exclude_outstaitng',
+        'exclude_outstanding_purchases', 'exclude_with_outstanding'
+    ))
+
+def is_exclude_non_outstanding(data) -> bool:
+    return _check_filter(data, (
+        'exclude_non_outstanding', 'exclude_non_outstating', 'exclude_no_outstanding',
+        'exclude_without_outstanding', 'exclude_zero_outstanding'
+    ))
+
+def is_exclude_return(data) -> bool:
+    return _check_filter(data, (
+        'exclude_return', 'exclude_returns', 'exclude_returned',
+        'exclude_has_return', 'exclude_has_returns', 'exclude_with_return', 'exclude_with_returns'
+    ))
+
+def is_exclude_non_return(data) -> bool:
+    return _check_filter(data, (
+        'exclude_non_return', 'exclude_non_returns', 'exclude_no_return',
+        'exclude_no_returns', 'exclude_without_return', 'exclude_without_returns'
+    ))
+
+
+def build_purchase_mongo_query(base_query: dict, data) -> dict:
+    and_clauses = []
+    if base_query:
+        and_clauses.append(base_query)
+
+    if getattr(data, 'status', None):
+        and_clauses.append({"status": data.status})
+
+    status_nin = []
+    if is_exclude_canceled(data):
+        status_nin.extend(["CANCELED", "canceled", "CANCELLED", "cancelled"])
+    if is_exclude_draft(data):
+        status_nin.extend(["DRAFT", "draft", "Draft"])
+    if status_nin:
+        and_clauses.append({"status": {"$nin": list(set(status_nin))}})
+
+    pm_nin = []
+    if is_exclude_not_paid(data):
+        pm_nin.extend(["NOT-PAID", "not-paid", "NOT_PAID", "not_paid", "UNPAID", "unpaid"])
+    if is_exclude_paid(data):
+        pm_nin.extend(["PAID", "paid", "COMPLETED", "completed", "Completed"])
+    if is_exclude_partial_paid(data):
+        pm_nin.extend(["PARTIAL", "partial", "PARTIALLY_PAID", "partially_paid", "PARTIAL_PAID", "partial_paid", "PARTIALLY-PAID", "partially-paid", "PARTIALY-PAID"])
+    if pm_nin:
+        and_clauses.append({"payment_status": {"$nin": list(set(pm_nin))}})
+
+    ex_out = is_exclude_outstanding(data)
+    ex_non_out = is_exclude_non_outstanding(data) or (getattr(data, 'outstanding', None) is True)
+
+    if ex_out and ex_non_out:
+        and_clauses.append({"_id": {"$exists": False}})  # Contradiction: match none
+    elif ex_non_out:
+        and_clauses.append({"payment_status": {"$nin": ["PAID", "paid", "COMPLETED", "completed", "Completed"]}})
+        and_clauses.append({"status": {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}})
+    elif ex_out:
+        and_clauses.append({"payment_status": {"$in": ["PAID", "paid", "COMPLETED", "completed", "Completed"]}})
+
+    ex_ret = is_exclude_return(data)
+    ex_non_ret = is_exclude_non_return(data)
+
+    if ex_ret and ex_non_ret:
+        and_clauses.append({"_id": {"$exists": False}})  # Contradiction: match none
+    elif ex_ret:
+        and_clauses.append({
+            "$or": [
+                {"returns": {"$exists": False}},
+                {"returns": None},
+                {"returns": {"$size": 0}},
+                {"returns": []}
+            ]
+        })
+    elif ex_non_ret:
+        and_clauses.append({
+            "$and": [
+                {"returns": {"$exists": True, "$ne": None, "$ne": []}},
+                {"returns.0": {"$exists": True}}
+            ]
+        })
+
+    from_date = getattr(data, 'from_date', None)
+    to_date = getattr(data, 'to_date', None)
+    if from_date or to_date:
+        date_cond = {}
+        if from_date:
+            date_cond["$gte"] = from_date
+        if to_date:
+            to_date_str = str(to_date)
+            if len(to_date_str) <= 10:
+                to_date_str += "T23:59:59"
+            date_cond["$lte"] = to_date_str
+        if date_cond:
+            and_clauses.append({"$or": [{"purchase_date": date_cond}, {"created_at": date_cond}]})
+
+    search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
+    if search_q:
+        regex = {"$regex": str(search_q).strip(), "$options": "i"}
+        and_clauses.append({
+            "$or": [
+                {"invoice_no": regex},
+                {"ui_id": regex},
+                {"id": regex},
+                {"purchase_id": regex},
+                {"supplier_id": regex},
+                {"supplier.name": regex},
+                {"supplier.supplier_name": regex},
+                {"items.name": regex}
+            ]
+        })
+
+    if not and_clauses:
+        return {}
+    if len(and_clauses) == 1:
+        return and_clauses[0]
+    return {"$and": and_clauses}
 
 
 class PurchaseReadDbRepo:
@@ -124,30 +275,7 @@ class PurchaseReadDbRepo:
     async def get_all(
         data:GetAllPurchaseSchemas
     ) -> List[dict]:
-        query = {}
-        if getattr(data, 'status', None):
-            query["status"] = data.status
-        if data.outstanding:
-            query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
-            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
-        elif is_exclude_canceled(data):
-            if "status" in query:
-                if isinstance(query["status"], str) and query["status"].upper() in ["CANCELED", "CANCELLED"]:
-                    query["status"] = {"$in": []}
-            else:
-                query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
-        search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
-        if search_q:
-            regex = {"$regex": str(search_q).strip(), "$options": "i"}
-            query["$or"] = [
-                {"invoice_no": regex},
-                {"ui_id": regex},
-                {"id": regex},
-                {"purchase_id": regex},
-                {"supplier_id": regex},
-                {"supplier.name": regex},
-                {"items.name": regex}
-            ]
+        query = build_purchase_mongo_query({}, data)
 
         offset = data.offset - 1 if data.offset > 0 else 0
         cursor = PURCHAESE_COLLECTION.find(
@@ -161,34 +289,10 @@ class PurchaseReadDbRepo:
     async def get_by_shop_id(
         data:GetPurchaseByShopIdSchema
     ) -> List[dict]:
-        query = {
-            "shop_id": data.shop_id
-        }
-        if getattr(data, 'status', None):
-            query["status"] = data.status
+        base = {"shop_id": data.shop_id}
         if getattr(data, 'supplier_id', None):
-            query["supplier_id"] = data.supplier_id
-        if data.outstanding:
-            query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
-            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
-        elif is_exclude_canceled(data):
-            if "status" in query:
-                if isinstance(query["status"], str) and query["status"].upper() in ["CANCELED", "CANCELLED"]:
-                    query["status"] = {"$in": []}
-            else:
-                query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
-        search_q = getattr(data, 'query', None) or getattr(data, 'q', None)
-        if search_q:
-            regex = {"$regex": str(search_q).strip(), "$options": "i"}
-            query["$or"] = [
-                {"invoice_no": regex},
-                {"ui_id": regex},
-                {"id": regex},
-                {"purchase_id": regex},
-                {"supplier_id": regex},
-                {"supplier.name": regex},
-                {"items.name": regex}
-            ]
+            base["supplier_id"] = data.supplier_id
+        query = build_purchase_mongo_query(base, data)
 
         offset = data.offset - 1 if data.offset > 0 else 0
         cursor = PURCHAESE_COLLECTION.find(
@@ -217,19 +321,16 @@ class PurchaseReadDbRepo:
     async def get_by_product_id(
         data: GetPurchaseByProductIdSchema
     ) -> List[dict]:
-        query = {
+        base = {
             "shop_id": data.shop_id,
             "items.product_id": data.product_id
         }
-        if data.outstanding:
-            query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
-            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
-        elif is_exclude_canceled(data):
-            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
+        query = build_purchase_mongo_query(base, data)
+        offset = data.offset - 1 if data.offset > 0 else 0
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
-        ).sort([("created_at", -1), ("purchase_date", -1)]).skip((data.offset - 1) * data.limit).limit(data.limit)
+        ).sort([("created_at", -1), ("purchase_date", -1)]).skip(offset * data.limit).limit(data.limit)
         res = await cursor.to_list(length=None)
         return [PurchaseReadDbRepo._populate_limit_fields(doc) for doc in res]
 
@@ -237,19 +338,19 @@ class PurchaseReadDbRepo:
     async def get_by_supplier_id(
         data: GetPurchaseBySupplierIdSchema
     ) -> List[dict]:
-        query = {
+        base = {
             "shop_id": data.shop_id,
-            "supplier.supplier_id": data.supplier_id
+            "$or": [
+                {"supplier.supplier_id": data.supplier_id},
+                {"supplier_id": data.supplier_id}
+            ]
         }
-        if data.outstanding:
-            query["payment_status"] = {"$nin": ["completed", "COMPLETED", "Completed"]}
-            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
-        elif is_exclude_canceled(data):
-            query["status"] = {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}
+        query = build_purchase_mongo_query(base, data)
+        offset = data.offset - 1 if data.offset > 0 else 0
         cursor = PURCHAESE_COLLECTION.find(
             query,
             {"_id": 0}
-        ).sort([("created_at", -1), ("purchase_date", -1)]).skip((data.offset - 1) * data.limit).limit(data.limit)
+        ).sort([("created_at", -1), ("purchase_date", -1)]).skip(offset * data.limit).limit(data.limit)
         res = await cursor.to_list(length=None)
         return [PurchaseReadDbRepo._populate_limit_fields(doc) for doc in res]
     
