@@ -327,6 +327,7 @@ class GetPurchaseBySupplierIdSchema(BaseModel):
     offset:int=1
     shop_id:str
     supplier_id:str
+    status: Optional[str] = None
     outstanding: Optional[bool] = None
     exclude_cancle: Optional[bool] = None
     exclude_cancel: Optional[bool] = None
