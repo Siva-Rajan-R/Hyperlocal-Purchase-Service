@@ -88,6 +88,12 @@ class PurchaseReadModel(BaseModel):
     max_updates: int = 1
     can_update: bool = True
     history: Optional[List[dict]] = []
+    added_by: Optional[str] = None
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    user_role: Optional[str] = None
+    user_info: Optional[dict] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

@@ -52,6 +52,12 @@ class StockMovementReadModel(BaseModel):
     total_quantity: float = 0
 
     products: List[StockMovementProduct] = []
+    added_by: Optional[str] = None
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    user_role: Optional[str] = None
+    user_info: Optional[dict] = None
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)

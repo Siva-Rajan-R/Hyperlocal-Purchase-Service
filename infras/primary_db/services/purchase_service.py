@@ -1,3 +1,4 @@
+from core.utils.user_context import current_user_ctx
 from core.utils.user_context import get_activity_log_user_info
 from models.service_models.base_service_model import BaseServiceModel
 from ..repos.purchase_repo import PurchaseRepo
@@ -427,6 +428,17 @@ class PurchaseService:
 
         supplier_name = await get_supplier_name(shop_id, supplier_id)
         supplier_info = SupplierInfo(supplier_id=supplier_id, supplier_name=supplier_name)
+        u_ctx = current_user_ctx.get() or {}
+        u_email = u_ctx.get("email", "")
+        u_name = u_ctx.get("name") or u_ctx.get("user_name")
+        if not u_name and u_email:
+            u_name = u_email.split("@")[0]
+        f_added_by = u_name or "System"
+        if u_email and f_added_by != u_email and f"- {u_email}" not in f_added_by:
+            f_added_by = f"{f_added_by} - {u_email}"
+        elif u_email and not u_name:
+            f_added_by = u_email
+
         purchase_read_model = PurchaseReadModel(
             purchase_id=purchase_id,
             ui_id=ui_id,
@@ -449,7 +461,13 @@ class PurchaseService:
             update_count=0,
             max_updates=const.PURCHASE_UPDATE_LIMIT,
             can_update=True,
-            paid_amount=0.0
+            paid_amount=0.0,
+            added_by=f_added_by,
+            user_id=u_ctx.get("user_id"),
+            user_name=u_name,
+            user_email=u_email,
+            user_role=u_ctx.get("role", ""),
+            user_info=u_ctx
         )
 
         await PurchaseReadDbRepo.add_updatereaddb(purchase_read_model)
@@ -507,13 +525,17 @@ class PurchaseService:
             "FETCHING_PRODUCTS": SagaStepsValueEnum.PENDING
         }
 
+        u_ctx = current_user_ctx.get() or {}
         payload_data = data.model_dump(mode="json")
         if effective_id:
             payload_data["id"] = effective_id
             data.id = effective_id
         payload_data["ui_id"] = ui_id
+        payload_data["user_infos"] = u_ctx
+        payload_data["user_info"] = u_ctx
+        payload_data["executing_user_id"] = executing_user_id
 
-        saga_data = {"purchase": payload_data, "executing_user_id": executing_user_id}
+        saga_data = {"purchase": payload_data, "executing_user_id": executing_user_id, "user_infos": u_ctx, "user_info": u_ctx}
         await SagaProducer.emit(
             saga_payload=CreateSagaStateSchema(
                 id=saga_id,
@@ -801,7 +823,7 @@ class PurchaseService:
                 'type': 'DECREMENT',
                 "entity_name": 'PURCHASE_UPDATE',
                 "entity_id": effective_pur_identifier,
-                'create_stock_mov_adj': True
+                'create_stock_mov_adj': True, 'user_infos': current_user_ctx.get(), 'user_info': current_user_ctx.get()
             })
 
         # Prevent duplicate item IDs in update payload
@@ -1183,7 +1205,7 @@ class PurchaseService:
                         'type': 'DECREMENT',
                         "entity_name": 'PURCHASE_UPDATE',
                         "entity_id": effective_pur_identifier,
-                        'create_stock_mov_adj': True
+                        'create_stock_mov_adj': True, 'user_infos': current_user_ctx.get(), 'user_info': current_user_ctx.get()
                     })
 
                     # Resolve batch_id and variant_id for the NEW product
@@ -1258,7 +1280,7 @@ class PurchaseService:
                         'type': 'INCREMENT',
                         "entity_name": 'PURCHASE_UPDATE',
                         "entity_id": effective_pur_identifier,
-                        'create_stock_mov_adj': True
+                        'create_stock_mov_adj': True, 'user_infos': current_user_ctx.get(), 'user_info': current_user_ctx.get()
                     })
                 else:
                     prev_batch_id = db_item.batch_id
@@ -1503,7 +1525,7 @@ class PurchaseService:
                     'type': 'INCREMENT',
                     "entity_name": 'PURCHASE_UPDATE',
                     "entity_id": effective_pur_identifier,
-                    'create_stock_mov_adj': True
+                    'create_stock_mov_adj': True, 'user_infos': current_user_ctx.get(), 'user_info': current_user_ctx.get()
                 })
             else:
                 # Standard Delta stock adjustment only when product was NOT replaced (since product replacement handles its own DECREMENT/INCREMENT)
@@ -1525,7 +1547,7 @@ class PurchaseService:
                             'type': 'INCREMENT',
                             "entity_name": 'PURCHASE_UPDATE',
                             "entity_id": effective_pur_identifier,
-                            'create_stock_mov_adj': True
+                            'create_stock_mov_adj': True, 'user_infos': current_user_ctx.get(), 'user_info': current_user_ctx.get()
                         })
                     # Existing item stock DECREMENT
                     elif stock_diff < 0:
@@ -1584,7 +1606,7 @@ class PurchaseService:
                             'type': 'DECREMENT',
                             "entity_name": 'PURCHASE_UPDATE',
                             "entity_id": effective_pur_identifier,
-                            'create_stock_mov_adj': True
+                            'create_stock_mov_adj': True, 'user_infos': current_user_ctx.get(), 'user_info': current_user_ctx.get()
                         })
                     # If stock quantity is unchanged, but serial numbers were swapped/replaced or just prices updated:
                     else:
@@ -1604,7 +1626,7 @@ class PurchaseService:
                                 'type': 'INCREMENT',
                                 "entity_name": 'PURCHASE_UPDATE',
                                 "entity_id": effective_pur_identifier,
-                                'create_stock_mov_adj': True
+                                'create_stock_mov_adj': True, 'user_infos': current_user_ctx.get(), 'user_info': current_user_ctx.get()
                             })
                         if removed_names:
                             rem_swapped_infos = []
@@ -1630,7 +1652,7 @@ class PurchaseService:
                                 'type': 'DECREMENT',
                                 "entity_name": 'PURCHASE_UPDATE',
                                 "entity_id": effective_pur_identifier,
-                                'create_stock_mov_adj': True
+                                'create_stock_mov_adj': True, 'user_infos': current_user_ctx.get(), 'user_info': current_user_ctx.get()
                             })
                         if not added_sn_infos and not removed_names:
                             # Update prices and details even if stock quantity is unchanged
@@ -2199,7 +2221,7 @@ class PurchaseService:
                 "PRODUCT_VERIFY_UPDATE":SagaStepsValueEnum.PENDING
             }
 
-            saga_data={"purchase":data.model_dump(mode="json")}
+            saga_data={"purchase":data.model_dump(mode="json"), "user_infos": current_user_ctx.get(), "user_info": current_user_ctx.get()}
             await SagaProducer.emit(
                 saga_payload=CreateSagaStateSchema(
                     id=saga_id,
@@ -2578,7 +2600,7 @@ class PurchaseService:
                 "entity_name": "PURCHASE_CANCEL",
                 "entity_id": purchase_id,
                 "buy_price": proc_item.get("buy_price", 0.0),
-                "create_stock_mov_adj": True
+                "create_stock_mov_adj": True, "user_infos": current_user_ctx.get(), "user_info": current_user_ctx.get()
             })
 
             # Update local Mongo ProdInvCollections stock directly

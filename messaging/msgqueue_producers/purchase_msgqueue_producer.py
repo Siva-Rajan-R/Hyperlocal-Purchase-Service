@@ -1,3 +1,4 @@
+from core.utils.user_context import current_user_ctx
 from core.utils.user_context import get_activity_log_user_info
 from ..main import RabbitMQMessagingConfig
 from aio_pika import RobustConnection
@@ -38,7 +39,20 @@ async def fetch_ui_id_from_utility(shop_id: str) -> str:
     return f"PUR-{generate_uuid()[:6].upper()}"
 
 
-async def verify_and_update(purchase_data: dict, headers: dict, payload: dict, rabbitmq_connection: Any):
+async def verify_and_update(purchase_data: dict, headers: dict, payload: dict, rabbitmq_connection: Any, user_infos: Optional[dict] = None):
+    u_info = user_infos or purchase_data.get('user_infos') or purchase_data.get('user_info') or current_user_ctx.get() or {}
+    u_name = u_info.get("name") or u_info.get("user_name")
+    u_email = u_info.get("email", "")
+    u_role = u_info.get("role", "")
+    u_id = u_info.get("user_id") or u_info.get("id")
+    if not u_name and u_email:
+        u_name = u_email.split("@")[0]
+    f_added_by = u_name or "System"
+    if u_email and f_added_by != u_email and f"- {u_email}" not in f_added_by:
+        f_added_by = f"{f_added_by} - {u_email}"
+    elif u_email and not u_name:
+        f_added_by = u_email
+
     body = []
     for item in purchase_data.get('items', []):
         stl_infos = item.get('storage_location_infos') or {}
@@ -66,7 +80,14 @@ async def verify_and_update(purchase_data: dict, headers: dict, payload: dict, r
             "entity_name": 'PURCHASE',
             "entity_id": purchase_data.get('ui_id') or purchase_data.get('purchase_ui_id'),
             "purchase_ui_id": purchase_data.get('ui_id') or purchase_data.get('purchase_ui_id'),
-            'create_stock_mov_adj': True
+            'create_stock_mov_adj': True,
+            'added_by': f_added_by,
+            'user_id': u_id,
+            'user_name': u_name,
+            'user_email': u_email,
+            'user_role': u_role,
+            'user_info': u_info,
+            'user_infos': u_info
         })
 
     routing_key = "products.service.routing.key"
@@ -148,6 +169,9 @@ class MessagingQueuePurchasegproducer:
         rabbitmq_msg_obj = RabbitMQMessagingConfig()
         datas = self.saga_datas.get("data", {})
         purchase_data = datas.get('purchase', {})
+        user_infos = datas.get("user_infos") or datas.get("user_info") or purchase_data.get("user_infos") or purchase_data.get("user_info") or {}
+        if user_infos and isinstance(user_infos, dict):
+            current_user_ctx.set(user_infos)
         execution = self.saga_datas.get('execution', {})
         current_step = execution.get('step')
 
@@ -166,7 +190,8 @@ class MessagingQueuePurchasegproducer:
                 purchase_data=purchase_data,
                 headers=self.headers,
                 payload=self.payload,
-                rabbitmq_connection=rabbitmq_msg_obj
+                rabbitmq_connection=rabbitmq_msg_obj,
+                user_infos=user_infos
             )
         
         # STEP-2: PRODUCT STRATEGY VERIFICATION
@@ -181,6 +206,9 @@ class MessagingQueuePurchasegproducer:
         # STEP-3: PARSE AND PERSIST TRANSACTION RECORD
         if current_step == "FETCHING_PRODUCTS":
             try:
+                user_infos = datas.get("user_infos") or datas.get("user_info") or {}
+                if user_infos and isinstance(user_infos, dict):
+                    current_user_ctx.set(user_infos)
                 shop_id = purchase_data.get("shop_id")
                 invoice_no = purchase_data.get("invoice_no")
                 incoming_id = purchase_data.get("id") or purchase_data.get("purchase_id")
@@ -579,6 +607,17 @@ class MessagingQueuePurchasegproducer:
                             if "field_name" in v and "value" in v:
                                 cf_dict[v["field_name"]] = v["value"]
 
+                    u_ctx = user_infos or current_user_ctx.get() or {}
+                    u_email = u_ctx.get("email", "")
+                    u_name = u_ctx.get("name") or u_ctx.get("user_name")
+                    if not u_name and u_email:
+                        u_name = u_email.split("@")[0]
+                    f_added_by = u_name or "System"
+                    if u_email and f_added_by != u_email and f"- {u_email}" not in f_added_by:
+                        f_added_by = f"{f_added_by} - {u_email}"
+                    elif u_email and not u_name:
+                        f_added_by = u_email
+
                     purchase_read_model = PurchaseReadModel(
                         purchase_id=purchase_id,
                         ui_id=ui_id,
@@ -601,7 +640,13 @@ class MessagingQueuePurchasegproducer:
                         update_count=0,
                         max_updates=PURCHASE_UPDATE_LIMIT,
                         can_update=True,
-                        history=[]
+                        history=[],
+                        added_by=f_added_by,
+                        user_id=u_ctx.get("user_id") or datas.get("executing_user_id"),
+                        user_name=u_name,
+                        user_email=u_email,
+                        user_role=u_ctx.get("role", ""),
+                        user_info=u_ctx
                     )
 
                     history_entry = {
@@ -693,7 +738,7 @@ class MessagingQueuePurchasegproducer:
                             exchange_name="activity_logs.exchange",
                             payload={
                                 "shop_id": shop_id,
-                                **get_activity_log_user_info(),
+                                **get_activity_log_user_info(user_infos or current_user_ctx.get()),
                                 "service": "Purchase",
                                 "action": "CREATED",
                                 "entity_type": "PURCHASE",
