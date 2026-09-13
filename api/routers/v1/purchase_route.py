@@ -3,7 +3,7 @@ from ...handlers.purchase_handler import HandlePurchaseRequest
 from fastapi import APIRouter,Query,Depends
 from infras.primary_db.main import AsyncSession,get_pg_async_session
 from typing import Optional,Annotated,List
-from schemas.v1.purchase_schemas.request_schema import CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema,CancelPurchaseSchema
+from schemas.v1.purchase_schemas.request_schema import RecordPurchasePaymentSchema, CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema,CancelPurchaseSchema
 from core.data_formats.enums.purchase_enums import PurchaseTypeEnums,PurchaseViewsEnums
 
 
@@ -66,6 +66,13 @@ async def get_by_supplier(session:ASYNC_PG_SESSION, data:GetPurchaseBySupplierId
 async def get_purchase_history(shop_id: str, id: str, session: ASYNC_PG_SESSION):
     return await HandlePurchaseRequest(session=session).get_purchase_history(shop_id=shop_id, id=id)
 
+
+
+@router.put("/payment")
+@router.post("/payment")
+@router.put("/outstanding")
+async def record_purchase_payment(data: RecordPurchasePaymentSchema, session: ASYNC_PG_SESSION):
+    return await HandlePurchaseRequest(session=session).record_payment(data=data)
 
 # --- Export Routes ---
 from schemas.v1.export_schemas import ExportDataRequestSchema
@@ -132,4 +139,4 @@ async def get_purchase_export_status(job_id: str):
             success=True
         ),
         data=json.loads(raw)
-    )
+    )

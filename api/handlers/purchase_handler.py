@@ -8,7 +8,7 @@ from icecream import ic
 from fastapi.exceptions import HTTPException
 from core.utils.validate_fields import convert_field_type,validate_fields
 from infras.caching.models.purchase_model import PurchaseProductCacheModel,PurchaseProductCachingSchema,PurchaseSupplierCacheModel,PurchaseSupplierCachingSchema
-from schemas.v1.purchase_schemas.request_schema import CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema,CancelPurchaseSchema
+from schemas.v1.purchase_schemas.request_schema import RecordPurchasePaymentSchema, CreatePurchaseSchema,UpdatePurchaseSchema,DeletePurchaseSchema,GetPurchaseByIdSchema,GetPurchaseByShopIdSchema,GetAllPurchaseSchemas,GetPurchaseByProductIdSchema,GetPurchaseBySupplierIdSchema,CancelPurchaseSchema
 from messaging.saga_producer import SagaProducer,CreateSagaStateSchema,SagaStatusEnum,SagaStateExecutionTypDict
 from hyperlocal_platform.core.enums.saga_state_enum import SagaStepsValueEnum
 from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
@@ -356,3 +356,23 @@ class HandlePurchaseRequest:
             data=res
         )
         
+
+
+    async def record_payment(self, data: RecordPurchasePaymentSchema):
+        res = await self.purchase_service_obj.record_payment(data=data)
+        if not res or not res.get("success"):
+            return ErrorResponseTypDict(
+                detail=BaseResponseTypDict(
+                    status_code=400,
+                    success=False,
+                    msg=res.get("msg", "Failed to record payment") if isinstance(res, dict) else "Failed to record payment"
+                )
+            )
+        return SuccessResponseTypDict(
+            detail=BaseResponseTypDict(
+                status_code=200,
+                success=True,
+                msg=res.get("msg", "Payment recorded successfully")
+            ),
+            data=res
+        )

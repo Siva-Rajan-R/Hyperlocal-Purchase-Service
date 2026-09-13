@@ -388,3 +388,17 @@ class ClearPurchaseOutstandingSchema(BaseModel):
     amount: float
     payment_method: str
     notes: Optional[str] = None
+
+class RecordPurchasePaymentSchema(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    purchase_id: Optional[str] = Field(default=None, alias="id")
+    id: Optional[str] = None
+    shop_id: str
+    amount: float
+    payment_method: Optional[str] = Field(default="CASH", alias="method")
+    reference_no: Optional[str] = None
+    notes: Optional[str] = None
+    supplier_id: Optional[str] = None
+    invoice_no: Optional[str] = None
+    date: Optional[Union[str, date]] = None
+    from_supplier_service: Optional[bool] = False

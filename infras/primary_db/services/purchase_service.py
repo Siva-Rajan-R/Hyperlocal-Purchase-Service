@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from hyperlocal_platform.core.enums.timezone_enum import TimeZoneEnum
 from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
 from schemas.v1.purchase_schemas.db_schemas import CreatePurchaseDbSchema,CreatePurchaseItemsDbSchema,CreatePurchasePricingDbSchema,CreateStorageLocationDbSchema,UpdatePurchaseDbSchema,UpdatePurchaseItemsDbSchema,UpdatePurchasePricingDbSchema,UpdateStorageLocationDbSchema,DeletePurchaseDbSchema,UpdateReorderPointDbSchema
-from schemas.v1.purchase_schemas.request_schema import CreatePurchaseItemsSchema,CreatePurchasePricingSchema,CreatePurchaseSchema,CreateStorageLocationSchema,UpdatePurchaseItemsSchema,UpdatePurchasePricingSchema,UpdatePurchaseSchema,UpdateStorageLocationSchema,DeletePurchaseSchema,PurchaseItemInfos,GetPurchaseByIdSchema,GetAllPurchaseSchemas,GetPurchaseByShopIdSchema,CancelPurchaseSchema
+from schemas.v1.purchase_schemas.request_schema import RecordPurchasePaymentSchema, CreatePurchaseItemsSchema,CreatePurchasePricingSchema,CreatePurchaseSchema,CreateStorageLocationSchema,UpdatePurchaseItemsSchema,UpdatePurchasePricingSchema,UpdatePurchaseSchema,UpdateStorageLocationSchema,DeletePurchaseSchema,PurchaseItemInfos,GetPurchaseByIdSchema,GetAllPurchaseSchemas,GetPurchaseByShopIdSchema,CancelPurchaseSchema
 import core.constants as const
 from core.errors.messaging_errors import BussinessError,FatalError,RetryableError
 from hyperlocal_platform.core.decorators.db_session_handler_dec import start_db_transaction
@@ -2818,3 +2818,144 @@ class PurchaseService:
 
     
     
+
+    async def record_payment(self, data: RecordPurchasePaymentSchema) -> dict:
+        purchase_id = data.purchase_id or data.id
+        shop_id = data.shop_id
+        if not purchase_id or not shop_id:
+            return {"success": False, "msg": "Missing purchase_id or shop_id"}
+        
+        # 1. Fetch current purchase from Read DB and/or PG
+        read_doc = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=purchase_id, shop_id=shop_id))
+        
+        from ..models.purchase_model import Purchase
+        from sqlalchemy import select, update
+        stmt = select(Purchase).where(Purchase.id == purchase_id, Purchase.shop_id == shop_id)
+        pg_res = (await self.session.execute(stmt)).scalar_one_or_none()
+        
+        if not read_doc and not pg_res:
+            return {"success": False, "msg": "Purchase not found"}
+        
+        supplier_id = (read_doc.get("supplier", {}).get("supplier_id") if read_doc and isinstance(read_doc.get("supplier"), dict) else None) or (getattr(pg_res, "supplier_id", None) if pg_res else None) or data.supplier_id
+        invoice_no = (read_doc.get("invoice_no") if read_doc else None) or (getattr(pg_res, "invoice_no", None) if pg_res else None) or (read_doc.get("ui_id") if read_doc else None) or (getattr(pg_res, "ui_id", None) if pg_res else None) or data.invoice_no or ""
+        
+        # 2. Get current payment list
+        current_payments = []
+        if read_doc and read_doc.get("payment_infos"):
+            current_payments = list(read_doc.get("payment_infos"))
+        elif pg_res and pg_res.payment_infos:
+            current_payments = list(pg_res.payment_infos)
+        
+        # 3. Build new payment record
+        pay_method = (data.payment_method or "CASH").upper()
+        amount_val = float(data.amount)
+        if amount_val <= 0:
+            return {"success": False, "msg": "Payment amount must be greater than 0"}
+        
+        import datetime
+        pay_date = data.date
+        if not pay_date:
+            pay_date = datetime.datetime.utcnow().isoformat()
+        elif isinstance(pay_date, (datetime.datetime, datetime.date)):
+            pay_date = pay_date.isoformat()
+        
+        new_pay_entry = {
+            "method": pay_method,
+            "amount": amount_val,
+            "date": str(pay_date)
+        }
+        if data.reference_no:
+            new_pay_entry["reference_no"] = str(data.reference_no).strip()
+        if data.notes:
+            new_pay_entry["notes"] = str(data.notes).strip()
+        
+        updated_payments = list(current_payments) + [new_pay_entry]
+        
+        # 4. Calculate total amounts, outstanding and status
+        item_infos = (read_doc.get("item_infos") if read_doc else {}) or (pg_res.item_infos if pg_res else {}) or {}
+        total_pur_cost = float(item_infos.get("total_pur_cost", 0) + item_infos.get("total_gst_amount", 0))
+        if total_pur_cost == 0 and read_doc and read_doc.get("calculations"):
+            total_pur_cost = float(read_doc.get("calculations", {}).get("total_amount", 0))
+            
+        total_amount_paid = sum(float(p.get("amount", 0)) for p in updated_payments)
+        outstanding_amount = max(0.0, round(total_pur_cost - total_amount_paid, 2))
+        
+        if outstanding_amount == 0:
+            outstanding_status = "COMPLETED"
+        elif total_amount_paid == 0:
+            outstanding_status = "NOT-PAID"
+        else:
+            outstanding_status = "PARTIALY-PAID"
+            
+        # 5. Update PG without incrementing update_count
+        if pg_res:
+            stmt_update = (
+                update(Purchase)
+                .where(Purchase.id == purchase_id, Purchase.shop_id == shop_id)
+                .values(
+                    payment_infos=updated_payments
+                )
+            )
+            await self.session.execute(stmt_update)
+            await self.session.commit()
+            
+        # 6. Update MongoDB Read DB
+        from infras.read_db.main import PURCHAESE_COLLECTION
+        from infras.read_db.repos.purchase_repo import PurchaseStatsReadDbRepo, SupplierStatsReadDbRepo
+        await PURCHAESE_COLLECTION.update_one(
+            {"purchase_id": purchase_id, "shop_id": shop_id},
+            {"$set": {
+                "payment_infos": updated_payments,
+                "paid_amount": total_amount_paid,
+                "outstanding_amount": outstanding_amount,
+                "payment_status": outstanding_status,
+                "updated_at": datetime.datetime.utcnow()
+            }}
+        )
+        import asyncio
+        asyncio.create_task(PurchaseStatsReadDbRepo.update_stats(shop_id))
+        if supplier_id:
+            asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(shop_id, supplier_id))
+            
+        # 7. Sync with Supplier Service if not originated from Supplier Service
+        if not data.from_supplier_service and supplier_id:
+            try:
+                import os, httpx
+                supplier_service_url = os.getenv("SUPPLIER_SERVICE_URL", "http://127.0.0.1:8002")
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.put(
+                        f"{supplier_service_url}/suppliers/outstanding",
+                        json={
+                            "id": supplier_id,
+                            "shop_id": shop_id,
+                            "outstanding_infos": {"amount": amount_val},
+                            "type": "DECREMENT",
+                            "entity_name": "PURCHASE",
+                            "entity_id": purchase_id,
+                            "invoice_no": invoice_no,
+                            "payment_method": pay_method,
+                            "notes": data.notes or f"Payment recorded for purchase {invoice_no}",
+                            "cleared_amount": amount_val,
+                            "from_purchase_service": True
+                        }
+                    )
+            except Exception as e:
+                ic(f"Failed to sync payment to supplier service: {e}")
+                
+        # 8. Activity log
+        await _send_activity_log(
+            shop_id=shop_id,
+            action="PAYMENT_RECORDED",
+            entity_id=purchase_id,
+            description=f"Recorded payment of {amount_val} ({pay_method}) for Purchase {invoice_no}",
+            entity_name=str(invoice_no)
+        )
+        
+        return {
+            "success": True,
+            "id": purchase_id,
+            "paid_amount": total_amount_paid,
+            "outstanding_amount": outstanding_amount,
+            "payment_status": outstanding_status,
+            "msg": "Payment recorded successfully"
+        }
