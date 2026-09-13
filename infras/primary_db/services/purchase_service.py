@@ -2942,7 +2942,55 @@ class PurchaseService:
             except Exception as e:
                 ic(f"Failed to sync payment to supplier service: {e}")
                 
-        # 8. Activity log
+        # 8. Publish analytics event
+        try:
+            from messaging.main import RabbitMQMessagingConfig
+            rabbitmq_msg_obj = RabbitMQMessagingConfig()
+            analytics_payload = {
+                "shop_id": shop_id,
+                "entity_name": "PURCHASE",
+                "entity_id": str(purchase_id),
+                "action": "UPDATE"
+            }
+            await rabbitmq_msg_obj.publish_event(
+                routing_key="analytics.service.routing.key",
+                exchange_name="analytics.service.exchange",
+                payload=analytics_payload,
+                headers={
+                    "entity_name": "purchase_event",
+                    "service_name": "ANALYTICS",
+                    "saga_id": "none",
+                    "reply_key": "none",
+                    "reply_exchange": "none",
+                    "reply_entity_name": "none",
+                    "body": analytics_payload
+                }
+            )
+            if supplier_id:
+                supp_analytics_payload = {
+                    "shop_id": shop_id,
+                    "entity_name": "SUPPLIER",
+                    "entity_id": str(supplier_id),
+                    "action": "UPDATE"
+                }
+                await rabbitmq_msg_obj.publish_event(
+                    routing_key="analytics.service.routing.key",
+                    exchange_name="analytics.service.exchange",
+                    payload=supp_analytics_payload,
+                    headers={
+                        "entity_name": "supplier_event",
+                        "service_name": "ANALYTICS",
+                        "saga_id": "none",
+                        "reply_key": "none",
+                        "reply_exchange": "none",
+                        "reply_entity_name": "none",
+                        "body": supp_analytics_payload
+                    }
+                )
+        except Exception as e:
+            ic(f"Failed to publish analytics event on purchase payment: {e}")
+
+        # 9. Activity log
         await _send_activity_log(
             shop_id=shop_id,
             action="PAYMENT_RECORDED",
