@@ -165,7 +165,7 @@ class MessagingQueuePurchaseReturnProducer:
                                 exchange_name="activity_logs.exchange",
                                 payload={
                                     "shop_id": shop_id,
-                                    **get_activity_log_user_info(),
+                                    **get_activity_log_user_info(datas.get("user_infos") or datas.get("user_info") or purchase_return_payload.get("user_infos") or purchase_return_payload.get("user_info") or current_user_ctx.get()),
                                     "service": "Purchase-Order",
                                     "action": "RETURN",
                                     "entity_type": "PURCHASE-RETURN",

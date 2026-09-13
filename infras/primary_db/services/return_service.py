@@ -1,3 +1,4 @@
+from core.utils.user_context import current_user_ctx
 from schemas.v1.purchase_schemas.return_schema import CreatePurchaseReturnSchema
 from schemas.v1.purchase_schemas.request_schema import GetPurchaseByIdSchema
 from hyperlocal_platform.core.utils.uuid_generator import generate_uuid
@@ -248,6 +249,11 @@ class ReturnService:
             saga_data = purchase_return_data
             saga_data["products"] = products_toupdate
             saga_data["executing_user_id"] = executing_user_id
+            saga_data["user_infos"] = current_user_ctx.get()
+            saga_data["user_info"] = current_user_ctx.get()
+            if "purchase_return" in saga_data and isinstance(saga_data["purchase_return"], dict):
+                saga_data["purchase_return"]["user_infos"] = current_user_ctx.get()
+                saga_data["purchase_return"]["user_info"] = current_user_ctx.get()
 
             await SagaProducer.emit(
                 saga_payload=CreateSagaStateSchema(
