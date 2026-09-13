@@ -24,7 +24,7 @@ class CustomFieldsHandler:
         )
 
     @staticmethod
-    async def update_field(session: AsyncSession, data:UpdateCustomFieldSchema):
+    async def update_field(data: UpdateCustomFieldSchema, session: AsyncSession):
         service = CustomFieldsService(session)
         res = await service.update_field(data=data)
         return SuccessResponseTypDict(
@@ -37,7 +37,7 @@ class CustomFieldsHandler:
         )
 
     @staticmethod
-    async def delete_field(session: AsyncSession,data:DeleteCustomFieldSchema):
+    async def delete_field(data: DeleteCustomFieldSchema, session: AsyncSession):
         service = CustomFieldsService(session)
         res = await service.delete_field(data=data)
         return SuccessResponseTypDict(
@@ -63,7 +63,7 @@ class CustomFieldsHandler:
         )
 
     @staticmethod
-    async def get_field_by_shop_id(session: AsyncSession,data:GetFieldByShopIdSchema):
+    async def get_field_by_shop_id(data: GetFieldByShopIdSchema, session: AsyncSession):
         service = CustomFieldsService(session)
         res = await service.get_field_by_shop_id(data=data)
         return SuccessResponseTypDict(

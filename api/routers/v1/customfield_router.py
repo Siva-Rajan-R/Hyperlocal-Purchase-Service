@@ -29,7 +29,7 @@ async def get_field_by_shop(session:PG_ASYNC_SESSION,data:GetFieldById=Depends()
     return await CustomFieldsHandler.get_field_by_id(data=data,session=session)
 
 @router.put("")
-async def update_field(data: UpdateCustomFieldSchema, session:PG_ASYNC_SESSION):
+async def update_field(data: UpdateCustomFieldSchema, session: PG_ASYNC_SESSION):
     return await CustomFieldsHandler.update_field(data=data, session=session)
 
 @router.delete("/{shop_id}/{id}")
