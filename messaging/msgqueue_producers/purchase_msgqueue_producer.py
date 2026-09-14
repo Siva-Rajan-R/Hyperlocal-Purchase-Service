@@ -704,7 +704,8 @@ class MessagingQueuePurchasegproducer:
                             "payment_method": str(payment_method_str),
                             "cleared_amount": float(total_amount_paid),
                             "outstanding_amount": float(outstanding_amount),
-                            "notes": notes_str
+                            "notes": notes_str,
+                            "from_purchase_service": True
                         }
                         await rabbitmq_msg_obj.publish_event(
                             routing_key="suppliers.service.routing.key",

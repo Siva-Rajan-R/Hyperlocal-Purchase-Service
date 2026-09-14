@@ -2009,7 +2009,8 @@ class PurchaseService:
                             "entity_id": fresh_pur.id,
                             "invoice_no": effective_invoice_no,
                             "clear_entity_history": True,
-                            "notes": "transferred outstanding to new supplier"
+                            "notes": "transferred outstanding to new supplier",
+                            "from_purchase_service": True
                         }
                         await rabbitmq_msg_obj.publish_event(
                             routing_key="suppliers.service.routing.key",
@@ -2052,7 +2053,8 @@ class PurchaseService:
                                 "payment_method": str(payment_method_str),
                                 "cleared_amount": float(total_amount_paid),
                                 "outstanding_amount": float(new_outstanding),
-                                "notes": f"Purchase {invoice_ref} transferred from previous supplier"
+                                "notes": f"Purchase {invoice_ref} transferred from previous supplier",
+                                "from_purchase_service": True
                             }
                             await rabbitmq_msg_obj.publish_event(
                                 routing_key="suppliers.service.routing.key",
@@ -2126,7 +2128,8 @@ class PurchaseService:
                                 "payment_method": str(pay_method),
                                 "notes": notes_str,
                                 "cleared_amount": cleared_amt,
-                                "outstanding_amount": float(new_outstanding)
+                                "outstanding_amount": float(new_outstanding),
+                                "from_purchase_service": True
                             }
                             await rabbitmq_msg_obj.publish_event(
                                 routing_key="suppliers.service.routing.key",
@@ -2665,7 +2668,8 @@ class PurchaseService:
                     "entity_name": "purchase",
                     "entity_id": purchase_id,
                     "invoice_no": invoice_no,
-                    "notes": f"canceled purchase {invoice_no}"
+                    "notes": f"canceled purchase {invoice_no}",
+                    "from_purchase_service": True
                 }
                 await rabbitmq_msg_obj.publish_event(
                     routing_key="suppliers.service.routing.key",

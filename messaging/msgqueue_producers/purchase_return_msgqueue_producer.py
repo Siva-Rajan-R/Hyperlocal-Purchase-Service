@@ -214,7 +214,8 @@ class MessagingQueuePurchaseReturnProducer:
                                         "payment_method": pay_method,
                                         "cleared_amount": 0.0,
                                         "outstanding_amount": new_invoice_outstanding,
-                                        "notes": f"Purchase return for invoice {invoice_no}. Refund amount: {float(total_refund)}"
+                                        "notes": f"Purchase return for invoice {invoice_no}. Refund amount: {float(total_refund)}",
+                                        "from_purchase_service": True
                                     }
                                     await rabbitmq_msg_obj.publish_event(
                                         routing_key="suppliers.service.routing.key",
