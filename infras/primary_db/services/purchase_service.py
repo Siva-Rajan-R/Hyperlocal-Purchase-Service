@@ -1911,9 +1911,9 @@ class PurchaseService:
             charges_infos = data.charges_infos.model_dump(mode="json") if data.charges_infos else (existing_read_doc.get("charges_infos") if existing_read_doc else {})
             transport_ch = float(charges_infos.get("transport_charge", 0) or 0)
             other_ch = float(charges_infos.get("other_charge", 0) or 0)
-            total_purchase_cost = round(final_total_cost + transport_ch + other_ch, 2)
+            total_purchase_cost = final_total_cost
             
-            if round(total_amount_paid, 2) > total_purchase_cost:
+            if round(total_amount_paid, 2) > round(total_purchase_cost, 2):
                 from fastapi import HTTPException
                 from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
                 raise HTTPException(
