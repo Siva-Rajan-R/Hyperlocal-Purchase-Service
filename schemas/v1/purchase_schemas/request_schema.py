@@ -20,16 +20,16 @@ class CreatePurchaseItemsSchema(BaseModel):
     stock_infos:PurchaseStocksInfosType
 
 class UpdatePurchaseItemsSchema(BaseModel):
-    id:str
-    product_id:str
-    variant_id:Optional[str]=None
-    batch_infos:Optional[PurchaseBatchInfosType]=None
-    serialno_numbers:Optional[List[Union[str, PurchaseSerialnoInfosType, dict]]]=None
-    storage_location_infos:Optional[PurchaseStorageLocationInfos]=None
-    reorder_point_infos:Optional[PurchaseReorderPointInfosType]=None
-    pricing_infos:Optional[PurchasePricingInfos]=None
-    gst:Optional[str]=None
-    stock_infos:PurchaseStocksInfosType
+    id: Optional[str] = None
+    product_id: str
+    variant_id: Optional[str] = None
+    batch_infos: Optional[PurchaseBatchInfosType] = None
+    serialno_numbers: Optional[List[Union[str, PurchaseSerialnoInfosType, dict]]] = None
+    storage_location_infos: Optional[PurchaseStorageLocationInfos] = None
+    reorder_point_infos: Optional[PurchaseReorderPointInfosType] = None
+    pricing_infos: Optional[PurchasePricingInfos] = None
+    gst: Optional[str] = None
+    stock_infos: Optional[PurchaseStocksInfosType] = None
 
 
 # PURCHAASE PRICING
@@ -108,11 +108,12 @@ class UpdatePurchaseSchema(BaseModel):
     id: Optional[str] = None
     shop_id: str
     supplier_id: Optional[str] = None
+    type: Optional[PurchaseTypeEnums] = None
     status: Optional[str] = None
     invoice_no: Optional[str] = None
     notes: Optional[str] = None
     calculation_infos: Optional[PurchaseCalculationInfos] = None
-
+    gst_infos: Optional[PurchaseGstInfos] = None
     charges_infos: Optional[PurchaseChargeInfos] = None
     payment_infos: Optional[List[PurchasePaymentInfos]] = None
     purchase_date: Optional[date] = None

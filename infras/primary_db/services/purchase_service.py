@@ -571,17 +571,73 @@ class PurchaseService:
 
 
 
-    async def update(self,data:UpdatePurchaseSchema):
-        purchase_repo_obj=PurchaseRepo(session=self.session)
-        items_toadd=[]
-        items_toupdate=[]
-        pricing_toadd=[]
-        pricing_toupdate=[]
-        stl_toadd=[]
-        stl_toupdate=[]
-        rop_toadd=[]
-        rop_toupdate=[]
-        inventory_toupdate=[]
+    def _convert_update_to_create_schema(self, data: UpdatePurchaseSchema, existing_ui_id: Optional[str] = None, status: str = "DRAFT") -> CreatePurchaseSchema:
+        from schemas.v1.purchase_schemas.request_schema import (
+            CreatePurchaseSchema, CreatePurchaseItemsSchema, PurchaseGstInfos
+        )
+        from schemas.v1.purchase_schemas.custom_types import (
+            PurchaseCalculationInfos, PurchaseChargeInfos, PurchasePricingInfos, PurchaseStocksInfosType
+        )
+        from core.data_formats.enums.purchase_enums import PurchaseTypeEnums
+        from datetime import date
+
+        create_items = []
+        for itm in (data.items or []):
+            pricing = itm.pricing_infos or PurchasePricingInfos(buy_price=0.0, sell_price=0.0)
+            gst_str = itm.gst if itm.gst is not None else "0%"
+            stock = itm.stock_infos if itm.stock_infos else PurchaseStocksInfosType(stocks=1.0)
+            create_items.append(
+                CreatePurchaseItemsSchema(
+                    product_id=itm.product_id,
+                    variant_id=itm.variant_id,
+                    batch_infos=itm.batch_infos,
+                    serialno_numbers=itm.serialno_numbers,
+                    storage_location_infos=itm.storage_location_infos,
+                    reorder_point_infos=itm.reorder_point_infos,
+                    pricing_infos=pricing,
+                    gst=gst_str,
+                    stock_infos=stock
+                )
+            )
+
+        calc_infos = data.calculation_infos or PurchaseCalculationInfos(distribute_by="NONE", gst_type="EXCLUSIVE")
+        gst_mode = "EXCLUSIVE"
+        if getattr(calc_infos, 'gst_type', None):
+            gst_mode = "EXCLUSIVE" if str(calc_infos.gst_type).upper() == "EXCLUSIVE" else "INCLUSIVE"
+        gst_infos = getattr(data, 'gst_infos', None) or PurchaseGstInfos(type=gst_mode)
+
+        charges = data.charges_infos or PurchaseChargeInfos(transport_charge=0.0, other_charge=0.0)
+        payments = data.payment_infos or []
+        p_date = data.purchase_date if data.purchase_date else date.today()
+
+        return CreatePurchaseSchema(
+            id=data.id,
+            shop_id=data.shop_id,
+            supplier_id=data.supplier_id or "",
+            type=getattr(data, 'type', None) or PurchaseTypeEnums.DIRECT,
+            status=status,
+            calculation_infos=calc_infos,
+            gst_infos=gst_infos,
+            charges_infos=charges,
+            payment_infos=payments,
+            purchase_date=p_date,
+            items=create_items,
+            invoice_no=data.invoice_no,
+            notes=data.notes,
+            custom_fields=data.custom_fields or {}
+        )
+
+    async def update(self, data: UpdatePurchaseSchema, user_id: Optional[str] = None):
+        purchase_repo_obj = PurchaseRepo(session=self.session)
+        items_toadd = []
+        items_toupdate = []
+        pricing_toadd = []
+        pricing_toupdate = []
+        stl_toadd = []
+        stl_toupdate = []
+        rop_toadd = []
+        rop_toupdate = []
+        inventory_toupdate = []
 
         item_infos = {
             'total_pur_items': 0,
@@ -590,17 +646,33 @@ class PurchaseService:
             'total_gst_amount': 0
         }
 
-        pur_get_res=await purchase_repo_obj.get_purchase_by_id(data=GetPurchaseByIdSchema(id=data.id,shop_id=data.shop_id))
+        pur_get_res = await purchase_repo_obj.get_purchase_by_id(data=GetPurchaseByIdSchema(id=data.id, shop_id=data.shop_id))
         ic(pur_get_res)
-        if not pur_get_res:
-            ic("The give purchase was not found")
-            return False
-
-        original_supplier_id = pur_get_res.supplier_id
         existing_read_doc_initial = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=data.id, shop_id=data.shop_id))
         existing_read_doc = existing_read_doc_initial
 
+        if not pur_get_res and not existing_read_doc_initial:
+            ic("The give purchase was not found")
+            return False
+
+        original_supplier_id = pur_get_res.supplier_id if pur_get_res else (existing_read_doc_initial.get("supplier_id") or existing_read_doc_initial.get("supplier", {}).get("supplier_id"))
+
         current_status = getattr(pur_get_res, 'status', None) or (existing_read_doc_initial.get("status") if existing_read_doc_initial else None)
+        
+        # Handle DRAFT purchase update or promotion to COMPLETED
+        if current_status and str(current_status).upper() == "DRAFT":
+            target_status = str(data.status or "DRAFT").upper()
+            existing_ui_id = getattr(pur_get_res, "ui_id", None) or (existing_read_doc_initial.get("ui_id") if existing_read_doc_initial else None)
+            if target_status == "DRAFT":
+                create_data = self._convert_update_to_create_schema(data, existing_ui_id=existing_ui_id, status="DRAFT")
+                res = await self.save_draft(create_data)
+                if isinstance(res, dict):
+                    return res.get("success", False)
+                return bool(res)
+            elif target_status == "COMPLETED":
+                create_data = self._convert_update_to_create_schema(data, existing_ui_id=existing_ui_id, status="COMPLETED")
+                res = await self.create(create_data, executing_user_id=user_id)
+                return bool(res)
         if current_status and str(current_status).upper() == "CANCELED":
             from fastapi import HTTPException
             from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
@@ -669,6 +741,46 @@ class PurchaseService:
                         status_code=400,
                         description="Invoice number already exists for this supplier",
                         success=False
+                    )
+                )
+
+        # If data.items is not provided, preserve existing items
+        if data.items is None:
+            from schemas.v1.purchase_schemas.custom_types import (
+                PurchasePricingInfos, PurchaseStorageLocationInfos,
+                PurchaseReorderPointInfosType, PurchaseBatchInfosType, PurchaseStocksInfosType
+            )
+            data.items = []
+            for db_itm in pur_get_res.items:
+                pricing = None
+                if db_itm.pricing_infos:
+                    pricing = PurchasePricingInfos(
+                        buy_price=float(db_itm.pricing_infos[0].buy_price),
+                        sell_price=float(db_itm.pricing_infos[0].sell_price)
+                    )
+                stl = None
+                if db_itm.storage_locations:
+                    stl = PurchaseStorageLocationInfos(name=db_itm.storage_locations[0].name)
+                rop = None
+                if db_itm.reorder_point:
+                    rop = PurchaseReorderPointInfosType(reorder_point=float(db_itm.reorder_point[0].reorder_point))
+                
+                batch_inf = PurchaseBatchInfosType(id=db_itm.batch_id) if db_itm.batch_id else None
+                
+                data.items.append(
+                    UpdatePurchaseItemsSchema(
+                        id=db_itm.id,
+                        product_id=db_itm.product_id,
+                        variant_id=db_itm.variant_id,
+                        batch_infos=batch_inf,
+                        serialno_numbers=db_itm.serial_numbers,
+                        storage_location_infos=stl,
+                        reorder_point_infos=rop,
+                        pricing_infos=pricing,
+                        gst=str(db_itm.gst) if db_itm.gst is not None else None,
+                        stock_infos=PurchaseStocksInfosType(
+                            stocks=float(db_itm.stocks)
+                        )
                     )
                 )
 
@@ -2262,7 +2374,7 @@ class PurchaseService:
             for key, new_val in dumped_updates.items():
                 if key in ["id", "shop_id", "user_id", "cur_user_id"]:
                     continue
-                prev_val = purchase_get_res.get(key) if 'purchase_get_res' in locals() and isinstance(purchase_get_res, dict) else None
+                prev_val = existing_read_doc_initial.get(key) if existing_read_doc_initial and isinstance(existing_read_doc_initial, dict) else None
                 if _is_empty_or_none(prev_val) and _is_empty_or_none(new_val):
                     continue
                 if prev_val != new_val and str(prev_val).strip() != str(new_val).strip():

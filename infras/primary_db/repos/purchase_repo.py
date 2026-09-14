@@ -360,30 +360,9 @@ class PurchaseRepo:
         stmt = (
             select(Purchase)
             .options(
-                load_only(
-                    *self.purchase_cols
-                ),
-
-                selectinload(Purchase.items)
-                .load_only(
-                    *self.item_cols
-                )
-                .selectinload(PurchaseItems.pricing_infos)
-                .load_only(
-                    *self.pricing_cols
-                ),
-
-                selectinload(Purchase.items)
-                .selectinload(PurchaseItems.storage_locations)
-                .load_only(
-                    *self.stl_cols
-                ),
-
-                selectinload(Purchase.items)
-                .selectinload(PurchaseItems.reorder_point)
-                .load_only(
-                    *self.rop_cols
-                ),
+                selectinload(Purchase.items).selectinload(PurchaseItems.pricing_infos),
+                selectinload(Purchase.items).selectinload(PurchaseItems.storage_locations),
+                selectinload(Purchase.items).selectinload(PurchaseItems.reorder_point)
             )
         )
         if conds:
@@ -451,30 +430,9 @@ class PurchaseRepo:
             select(Purchase)
             .where(and_(*conds))
             .options(
-                load_only(
-                    *self.purchase_cols
-                ),
-
-                selectinload(Purchase.items)
-                .load_only(
-                    *self.item_cols
-                )
-                .selectinload(PurchaseItems.pricing_infos)
-                .load_only(
-                    *self.pricing_cols
-                ),
-
-                selectinload(Purchase.items)
-                .selectinload(PurchaseItems.storage_locations)
-                .load_only(
-                    *self.stl_cols
-                ),
-
-                selectinload(Purchase.items)
-                .selectinload(PurchaseItems.reorder_point)
-                .load_only(
-                    *self.rop_cols
-                ),
+                selectinload(Purchase.items).selectinload(PurchaseItems.pricing_infos),
+                selectinload(Purchase.items).selectinload(PurchaseItems.storage_locations),
+                selectinload(Purchase.items).selectinload(PurchaseItems.reorder_point)
             )
             .order_by(Purchase.created_at.desc())
             .offset(offset=cursor).limit(limit=data.limit)
@@ -494,30 +452,9 @@ class PurchaseRepo:
                 Purchase.id==data.id
             )
             .options(
-                load_only(
-                    *self.purchase_cols
-                ),
-
-                selectinload(Purchase.items)
-                .load_only(
-                    *self.item_cols
-                )
-                .selectinload(PurchaseItems.pricing_infos)
-                .load_only(
-                    *self.pricing_cols
-                ),
-
-                selectinload(Purchase.items)
-                .selectinload(PurchaseItems.storage_locations)
-                .load_only(
-                    *self.stl_cols
-                ),
-
-                selectinload(Purchase.items)
-                .selectinload(PurchaseItems.reorder_point)
-                .load_only(
-                    *self.rop_cols
-                ),
+                selectinload(Purchase.items).selectinload(PurchaseItems.pricing_infos),
+                selectinload(Purchase.items).selectinload(PurchaseItems.storage_locations),
+                selectinload(Purchase.items).selectinload(PurchaseItems.reorder_point)
             )
         )
 

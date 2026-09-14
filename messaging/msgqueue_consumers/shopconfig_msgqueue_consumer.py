@@ -40,9 +40,9 @@ class ShopConfigMsgQueueConsumer:
             queue = await rb_msg.create_queue(
                 routing_key="hyperlocal.shopconfig.updated",
                 exchange_name="hyperlocal_domain_events",
-                queue_name="inventory_service_shopconfig_q"
+                queue_name="purchase_service_shopconfig_q"
             )
             await rb_msg.consume_event(queue_name=queue.name, handler=self.process_shopconfig_update)
-            ic("ShopConfigMsgQueueConsumer started listening on inventory_service_shopconfig_q")
+            ic("ShopConfigMsgQueueConsumer started listening on purchase_service_shopconfig_q")
         except Exception as e:
             ic(f"Failed to start ShopConfigMsgQueueConsumer: {e}")

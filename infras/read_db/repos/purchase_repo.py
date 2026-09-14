@@ -77,13 +77,22 @@ def build_purchase_mongo_query(base_query: dict, data) -> dict:
     if base_query:
         and_clauses.append(base_query)
 
-    if getattr(data, 'status', None):
-        and_clauses.append({"status": data.status})
+    req_status = getattr(data, 'status', None)
+    if req_status and req_status not in ["ALL", "all", ""]:
+        st_upper = str(req_status).upper()
+        if st_upper in ["CANCELED", "CANCELLED"]:
+            and_clauses.append({"status": {"$in": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}})
+        elif st_upper == "DRAFT":
+            and_clauses.append({"status": {"$in": ["DRAFT", "draft", "Draft"]}})
+        elif st_upper == "COMPLETED":
+            and_clauses.append({"status": {"$in": ["COMPLETED", "completed", "Completed"]}})
+        else:
+            and_clauses.append({"status": req_status})
 
     status_nin = []
-    if is_exclude_canceled(data):
+    if is_exclude_canceled(data) and (not req_status or str(req_status).upper() not in ["CANCELED", "CANCELLED"]):
         status_nin.extend(["CANCELED", "canceled", "CANCELLED", "cancelled"])
-    if is_exclude_draft(data):
+    if is_exclude_draft(data) and (not req_status or str(req_status).upper() != "DRAFT"):
         status_nin.extend(["DRAFT", "draft", "Draft"])
     if status_nin:
         and_clauses.append({"status": {"$nin": list(set(status_nin))}})

@@ -24,7 +24,7 @@ async def worker():
         {'exc_name':'purchase.service.exchange','q_name':'purchase.service.queue','r_key':'purchase.service.routing.key'},
         {'exc_name':'purchase.producer.exchange','q_name':'purchase.producer.queue','r_key':'purchase.producer.routing.key'},
         {'exc_name':'purchases.producer.exchange','q_name':'purchase.producer.queue','r_key':'purchases.producer.routing.key'},
-        {'exc_name':'hyperlocal_domain_events','q_name':'supplier_service_shopconfig_q','r_key':'hyperlocal.shopconfig.updated'}
+        {'exc_name':'hyperlocal_domain_events','q_name':'purchase_service_shopconfig_q','r_key':'hyperlocal.shopconfig.updated'}
     ]
 
     for queue in queues:
@@ -48,4 +48,10 @@ async def worker():
     shop_config_consumer = ShopConfigMsgQueueConsumer()
     await shop_config_consumer.consume()
 
-    await asyncio.Event().wait()
+    try:
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        pass
+    finally:
+        if rabbitmq_conn and not rabbitmq_conn.is_closed:
+            await rabbitmq_conn.close()
