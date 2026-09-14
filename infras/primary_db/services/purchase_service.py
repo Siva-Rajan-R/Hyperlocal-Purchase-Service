@@ -2587,6 +2587,14 @@ class PurchaseService:
 
             normalized_serials = normalize_serial_numbers(serials)
 
+            pur_ui_id = getattr(pur_db_res, 'ui_id', None) or (read_doc.get("ui_id") if read_doc else None) or invoice_no or purchase_id
+            u_ctx = current_user_ctx.get() or {}
+            u_name = u_ctx.get("name") or u_ctx.get("user_name") or ""
+            u_email = u_ctx.get("email") or ""
+            added_by_str = u_name or u_email or "System"
+            if u_name and u_email and f"- {u_email}" not in added_by_str:
+                added_by_str = f"{u_name} - {u_email}"
+
             inventory_toupdate.append({
                 "shop_id": shop_id,
                 "product_id": p_id,
@@ -2596,9 +2604,15 @@ class PurchaseService:
                 "stocks": qty_to_revert,
                 "type": "DECREMENT",
                 "entity_name": "PURCHASE_CANCEL",
-                "entity_id": purchase_id,
+                "entity_id": str(pur_ui_id),
+                "ui_id": str(pur_ui_id),
+                "purchase_ui_id": str(pur_ui_id),
+                "purchase_id": str(pur_ui_id),
                 "buy_price": proc_item.get("buy_price", 0.0),
-                "create_stock_mov_adj": True, "user_infos": current_user_ctx.get(), "user_info": current_user_ctx.get()
+                "create_stock_mov_adj": True,
+                "user_infos": u_ctx,
+                "user_info": u_ctx,
+                "added_by": added_by_str
             })
 
             # Update local Mongo ProdInvCollections stock directly
