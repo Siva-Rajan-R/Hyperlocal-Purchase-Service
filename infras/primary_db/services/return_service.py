@@ -191,6 +191,13 @@ class ReturnService:
                         else:
                             founded_serialno.append({"id": matched_sn, "name": matched_sn})
 
+                u_ctx = current_user_ctx.get() or {}
+                u_name = u_ctx.get("name") or u_ctx.get("user_name") or ""
+                u_email = u_ctx.get("email") or ""
+                added_by_str = u_name or u_email or "System"
+                if u_name and u_email and f"- {u_email}" not in added_by_str:
+                    added_by_str = f"{u_name} - {u_email}"
+
                 # DECREMENT inventory stock upon returning to supplier
                 products_toupdate.append({
                     "shop_id": shop_id,
@@ -203,7 +210,14 @@ class ReturnService:
                     "type": "DECREMENT",
                     "create_stock_mov_adj": True,
                     "ui_id": ui_id,
-                    "purchase_id": purchase_id
+                    "purchase_id": purchase_id,
+                    "added_by": added_by_str,
+                    "user_id": u_ctx.get("user_id") or u_ctx.get("id"),
+                    "user_name": u_name,
+                    "user_email": u_email,
+                    "user_role": u_ctx.get("role"),
+                    "user_info": u_ctx,
+                    "user_infos": u_ctx
                 })
 
                 total_refund_qty += inc_quantity
