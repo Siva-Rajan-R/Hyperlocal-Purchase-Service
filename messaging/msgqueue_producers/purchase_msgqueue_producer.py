@@ -670,14 +670,24 @@ class MessagingQueuePurchasegproducer:
 
                     if purchase_data.get("supplier_id"):
                         payment_method_str = "N/A"
+                        ref_no = ""
                         if payment_infos:
-                            last_pay = payment_infos[0]
-                            payment_method_str = last_pay.get("mode") or last_pay.get("method") or "N/A"
+                            last_pay = payment_infos[0] if isinstance(payment_infos, list) else payment_infos
+                            if isinstance(last_pay, dict):
+                                payment_method_str = last_pay.get("mode") or last_pay.get("method") or "N/A"
+                                ref_no = last_pay.get("reference_no") or last_pay.get("ref_no") or last_pay.get("transaction_no") or ""
+                            elif hasattr(last_pay, "method"):
+                                payment_method_str = getattr(last_pay, "method", "N/A")
+                                ref_no = getattr(last_pay, "reference_no", None) or getattr(last_pay, "ref_no", None) or getattr(last_pay, "transaction_no", None) or ""
                             if hasattr(payment_method_str, "value"):
                                 payment_method_str = payment_method_str.value
 
+                        if not ref_no and purchase_data.get("notes"):
+                            ref_no = str(purchase_data.get("notes")).strip()
+
                         invoice_ref = purchase_data.get('invoice_no') or ui_id
-                        notes_str = f"Initial payment of {total_amount_paid} for purchase {invoice_ref}" if total_amount_paid > 0 else f"Purchase {invoice_ref} created"
+                        ref_suffix = f" (Txn/Ref: {ref_no})" if ref_no else ""
+                        notes_str = f"Initial payment of {total_amount_paid} for purchase {invoice_ref}{ref_suffix}" if total_amount_paid > 0 else f"Purchase {invoice_ref} created{ref_suffix}"
 
                         supplier_payload = {
                             "shop_id": purchase_data.get('shop_id'),

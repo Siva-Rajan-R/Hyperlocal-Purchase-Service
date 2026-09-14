@@ -30,8 +30,12 @@ class PurchaseItemInfos(BaseModel):
     total_gst:str
 
 class PurchasePaymentInfos(BaseModel):
-    method:PurchasePaymentMethods
-    amount:float
+    model_config = ConfigDict(extra="allow")
+    method: PurchasePaymentMethods
+    amount: float
+    reference_no: Optional[str] = None
+    transaction_no: Optional[str] = None
+    notes: Optional[str] = None
 
 class PurchaseStorageLocationInfos(BaseModel):
     name:str

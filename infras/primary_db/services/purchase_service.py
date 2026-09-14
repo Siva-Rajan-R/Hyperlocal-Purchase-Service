@@ -2080,40 +2080,33 @@ class PurchaseService:
                     outstanding_diff = round(new_outstanding - old_outstanding, 2)
 
                     if paid_diff != 0 or outstanding_diff != 0:
+                        last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
+                        pay_method = last_payment.get("mode") or last_payment.get("method") or "ADJUSTMENT"
+                        if hasattr(pay_method, "value"):
+                            pay_method = pay_method.value
+                        ref_no = last_payment.get("reference_no") or last_payment.get("ref_no") or last_payment.get("transaction_no") or getattr(data, "notes", None) or ""
+                        ref_suffix = f" (Txn/Ref: {ref_no})" if ref_no and "Txn/Ref" not in str(last_payment.get("notes") or "") else ""
+
                         if paid_diff > 0:
                             update_type = "DECREMENT"
                             diff_amount = paid_diff
-                            last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
-                            pay_method = last_payment.get("mode") or last_payment.get("method") or "ADJUSTMENT"
-                            if hasattr(pay_method, "value"):
-                                pay_method = pay_method.value
                             notes_str = last_payment.get("notes") or f"Additional payment of {paid_diff} for purchase {getattr(fresh_pur, 'invoice_no', '')}"
+                            if ref_suffix and ref_suffix not in notes_str:
+                                notes_str += ref_suffix
                             cleared_amt = float(paid_diff)
                         elif paid_diff < 0:
                             update_type = "INCREMENT"
                             diff_amount = abs(paid_diff)
-                            last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
-                            pay_method = last_payment.get("mode") or last_payment.get("method") or "ADJUSTMENT"
-                            if hasattr(pay_method, "value"):
-                                pay_method = pay_method.value
                             notes_str = f"Payment reduced by {abs(paid_diff)} for purchase {getattr(fresh_pur, 'invoice_no', '')}"
                             cleared_amt = 0.0
                         elif outstanding_diff > 0:
                             update_type = "INCREMENT"
                             diff_amount = outstanding_diff
-                            last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
-                            pay_method = last_payment.get("mode") or last_payment.get("method") or "ADJUSTMENT"
-                            if hasattr(pay_method, "value"):
-                                pay_method = pay_method.value
                             notes_str = f"Purchase updated (cost increased by {outstanding_diff})"
                             cleared_amt = 0.0
                         else:
                             update_type = "DECREMENT"
                             diff_amount = abs(outstanding_diff)
-                            last_payment = payment_infos_dicts[-1] if payment_infos_dicts else {}
-                            pay_method = last_payment.get("mode") or last_payment.get("method") or "ADJUSTMENT"
-                            if hasattr(pay_method, "value"):
-                                pay_method = pay_method.value
                             notes_str = f"Purchase updated (cost reduced by {abs(outstanding_diff)})"
                             cleared_amt = 0.0
 
@@ -2923,6 +2916,11 @@ class PurchaseService:
                 import os, httpx
                 supplier_service_url = os.getenv("SUPPLIER_SERVICE_URL", "http://127.0.0.1:8002")
                 async with httpx.AsyncClient(timeout=5.0) as client:
+                    ref_suffix = f" (Txn/Ref: {data.reference_no})" if getattr(data, "reference_no", None) else ""
+                    notes_str = data.notes or f"Payment recorded for purchase {invoice_no}"
+                    if ref_suffix and ref_suffix not in notes_str:
+                        notes_str += ref_suffix
+
                     await client.put(
                         f"{supplier_service_url}/suppliers/outstanding",
                         json={
@@ -2934,7 +2932,7 @@ class PurchaseService:
                             "entity_id": purchase_id,
                             "invoice_no": invoice_no,
                             "payment_method": pay_method,
-                            "notes": data.notes or f"Payment recorded for purchase {invoice_no}",
+                            "notes": notes_str,
                             "cleared_amount": amount_val,
                             "from_purchase_service": True
                         }
