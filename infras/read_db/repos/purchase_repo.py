@@ -228,7 +228,8 @@ class PurchaseReadDbRepo:
     async def update_purchase_with_history(purchase_data: dict, new_version: str):
         try:
             import core.constants as const
-            existing_doc = await PURCHAESE_COLLECTION.find_one({"purchase_id": purchase_data["purchase_id"], "shop_id": purchase_data["shop_id"]})
+            p_id = purchase_data.get("purchase_id") or purchase_data.get("id")
+            existing_doc = await PURCHAESE_COLLECTION.find_one({"$or": [{"purchase_id": p_id}, {"id": p_id}], "shop_id": purchase_data["shop_id"]})
             history = []
             if existing_doc:
                 history = existing_doc.get("history") or []
