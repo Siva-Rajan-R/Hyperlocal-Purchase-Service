@@ -254,8 +254,9 @@ class PurchaseReadDbRepo:
             purchase_data["can_update"] = can_update
             purchase_data["history"] = history
             
+            p_id = purchase_data.get("purchase_id") or purchase_data.get("id")
             await PURCHAESE_COLLECTION.update_one(
-                {"purchase_id": purchase_data["purchase_id"], "shop_id": purchase_data["shop_id"]},
+                {"$or": [{"purchase_id": p_id}, {"id": p_id}], "shop_id": purchase_data["shop_id"]},
                 {"$set": purchase_data},
                 upsert=True
             )

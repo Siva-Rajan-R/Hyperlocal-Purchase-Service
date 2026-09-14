@@ -122,7 +122,7 @@ class PurchaseRepo:
         if not data:
             return True
         for d in data:
-            val_dict = d.model_dump(mode="python", exclude_unset=True, exclude_none=True, exclude=['shop_id'])
+            val_dict = d.model_dump(mode="json", exclude_unset=True, exclude_none=True, exclude=['shop_id'])
             if "id" in val_dict:
                 p_id = val_dict.pop("id")
                 if "purchase_date" in val_dict and "date" not in val_dict:
@@ -133,7 +133,7 @@ class PurchaseRepo:
                 if "date" in val_dict and isinstance(val_dict["date"], str):
                     from datetime import datetime
                     try:
-                        val_dict["date"] = datetime.fromisoformat(val_dict["date"])
+                        val_dict["date"] = datetime.fromisoformat(val_dict["date"].replace("Z", "+00:00"))
                     except Exception:
                         pass
 
