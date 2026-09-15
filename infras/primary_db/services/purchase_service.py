@@ -2408,7 +2408,7 @@ class PurchaseService:
 
     async def delete(self, data: DeletePurchaseSchema):
         from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo, PurchaseStatsReadDbRepo, SupplierStatsReadDbRepo
-        from schemas.v1.db_schemas.purchase_schema import DeletePurchaseDbSchema
+        from schemas.v1.purchase_schemas.db_schemas import DeletePurchaseDbSchema
         import asyncio
 
         shop_id = data.shop_id
