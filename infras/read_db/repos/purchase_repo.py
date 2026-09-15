@@ -431,16 +431,17 @@ class PurchaseReadDbRepo:
     
     @staticmethod
     async def delete_purchase(purchase_id: str):
-        existing = await PURCHAESE_COLLECTION.find_one({"purchase_id": purchase_id})
+        query = {"$or": [{"purchase_id": purchase_id}, {"id": purchase_id}, {"ui_id": purchase_id}]}
+        existing = await PURCHAESE_COLLECTION.find_one(query)
         shop_id = existing.get("shop_id") if existing else None
         
-        result = await PURCHAESE_COLLECTION.delete_one({"purchase_id": purchase_id})
+        result = await PURCHAESE_COLLECTION.delete_many(query)
         
         if result.deleted_count > 0 and shop_id:
             import asyncio
             asyncio.create_task(PurchaseStatsReadDbRepo.update_stats(shop_id))
             
-            supplier_id = existing.get("supplier", {}).get("supplier_id") if existing else None
+            supplier_id = existing.get("supplier", {}).get("supplier_id") if existing and isinstance(existing.get("supplier"), dict) else (existing.get("supplier_id") if existing else None)
             if supplier_id:
                 asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(shop_id, supplier_id))
             

@@ -36,7 +36,8 @@ async def cancel(data: CancelPurchaseSchema, session: ASYNC_PG_SESSION, user_id:
 
 
 @router.delete("/{shop_id}/{id}")
-async def delete(session:ASYNC_PG_SESSION,data:DeletePurchaseSchema=Depends()):
+async def delete(shop_id: str, id: str, session: ASYNC_PG_SESSION):
+    data = DeletePurchaseSchema(id=id, shop_id=shop_id)
     return await HandlePurchaseRequest(session=session).delete(data=data)
 
 

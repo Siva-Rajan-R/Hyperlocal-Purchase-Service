@@ -290,21 +290,38 @@ class PurchaseRepo:
         return True
     
     @start_db_transaction
-    async def delete_purchase(self,data:DeletePurchaseDbSchema):
-        stmt=(
-            delete(
-                Purchase
-            )
-            .where(
-                Purchase.id==data.id,
-                Purchase.shop_id==data.shop_id
-            )
-            .returning(*self.purchase_cols)
-        )
+    async def delete_purchase(self, data: DeletePurchaseDbSchema):
+        try:
+            # 1. Fetch item ids for this purchase
+            items_stmt = select(PurchaseItems.id).where(or_(PurchaseItems.purchase_id == data.id, PurchaseItems.purchase_id == str(data.id)))
+            item_ids = (await self.session.execute(items_stmt)).scalars().all()
+            if item_ids:
+                await self.session.execute(delete(PurchaseItemsPricing).where(PurchaseItemsPricing.purchase_item_id.in_(item_ids)))
+                await self.session.execute(delete(PurchaseItemsStoragelocation).where(PurchaseItemsStoragelocation.purchase_item_id.in_(item_ids)))
+                await self.session.execute(delete(PurchaseItemsReorderPoint).where(PurchaseItemsReorderPoint.purchase_item_id.in_(item_ids)))
+                await self.session.execute(delete(PurchaseItems).where(PurchaseItems.id.in_(item_ids)))
 
-        res=(await self.session.execute(stmt)).mappings().all()
-        ic(res)
-        return res
+            # 2. Delete custom fields
+            try:
+                from ..models.customfield_model import PurchaseCustomFieldsValues
+                await self.session.execute(delete(PurchaseCustomFieldsValues).where(PurchaseCustomFieldsValues.purchase_id == data.id))
+            except Exception:
+                pass
+
+            # 3. Delete purchase
+            stmt = (
+                delete(Purchase)
+                .where(
+                    or_(Purchase.id == data.id, Purchase.ui_id == data.id),
+                    Purchase.shop_id == data.shop_id
+                )
+                .returning(*self.purchase_cols)
+            )
+            res = (await self.session.execute(stmt)).mappings().all()
+            return res
+        except Exception as ex:
+            ic("Error deleting purchase from Postgres:", ex)
+            return []
     
     async def get_purchases(self,data:GetAllPurchaseSchemas):
         from datetime import datetime, timezone

@@ -220,25 +220,14 @@ class HandlePurchaseRequest:
         )
     
 
-    async def delete(self,data:DeletePurchaseSchema):
-        res=await self.purchase_service_obj.delete(data=data)
+    async def delete(self, data: DeletePurchaseSchema):
+        res = await self.purchase_service_obj.delete(data=data)
 
-        if res:
-            return SuccessResponseTypDict(
-                detail=BaseResponseTypDict(
-                    msg="Purchase deleted successfully",
-                    status_code=200,
-                    success=True
-                )
-            )
-        
-        raise HTTPException(
-            status_code=400,
-            detail=ErrorResponseTypDict(
-                msg="Error : Deleting Purchase",
-                status_code=400,
-                description=f"Invalid data types",
-                success=False
+        return SuccessResponseTypDict(
+            detail=BaseResponseTypDict(
+                msg="Purchase deleted successfully",
+                status_code=200,
+                success=True
             )
         )
 

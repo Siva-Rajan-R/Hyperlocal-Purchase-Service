@@ -2406,11 +2406,28 @@ class PurchaseService:
 
         return True
 
-    async def delete(self,data:DeletePurchaseSchema):
-        final_data=DeletePurchaseDbSchema(**data.model_dump(mode="json"))
-        res = await self.purchase_repo_obj.delete_purchase(data=final_data)
-        
-        if res:
+    async def delete(self, data: DeletePurchaseSchema):
+        from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo, PurchaseStatsReadDbRepo, SupplierStatsReadDbRepo
+        from schemas.v1.db_schemas.purchase_schema import DeletePurchaseDbSchema
+        import asyncio
+
+        shop_id = data.shop_id
+        purchase_id = data.id
+
+        # 1. Delete from Mongo Read DB
+        mongo_deleted = await PurchaseReadDbRepo.delete_purchase(purchase_id)
+
+        # 2. Delete from Postgres Primary DB
+        final_data = DeletePurchaseDbSchema(id=purchase_id, shop_id=shop_id)
+        pg_res = await self.purchase_repo_obj.delete_purchase(data=final_data)
+
+        # 3. Trigger stats update
+        try:
+            asyncio.create_task(PurchaseStatsReadDbRepo.update_stats(shop_id))
+        except Exception:
+            pass
+
+        if mongo_deleted or pg_res:
             try:
                 invoice_no = str(data.id)
                 from messaging.main import RabbitMQMessagingConfig
@@ -2434,7 +2451,7 @@ class PurchaseService:
             except Exception as e:
                 ic(f"Failed to publish activity log: {e}")
 
-        return res
+        return True
 
 
     async def get_purchases(self,data:GetAllPurchaseSchemas):
