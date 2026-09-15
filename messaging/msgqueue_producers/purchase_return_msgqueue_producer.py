@@ -203,18 +203,20 @@ class MessagingQueuePurchaseReturnProducer:
                                     if not pay_method:
                                         pay_method = "ON_CREDIT"
 
+                                    rounded_refund = round(float(total_refund), 2)
+                                    rounded_outstanding = round(float(new_invoice_outstanding), 2)
                                     supplier_payload = {
                                         "shop_id": shop_id,
                                         "id": supplier_id,
-                                        "outstanding_infos": {"amount": float(total_refund)},
+                                        "outstanding_infos": {"amount": rounded_refund},
                                         "type": "DECREMENT",
                                         "entity_name": "purchase_return",
                                         "entity_id": str(return_toadd.get("id") or purchase_id),
                                         "invoice_no": str(invoice_no or ""),
                                         "payment_method": pay_method,
-                                        "cleared_amount": 0.0,
-                                        "outstanding_amount": new_invoice_outstanding,
-                                        "notes": f"Purchase return for invoice {invoice_no}. Refund amount: {float(total_refund)}",
+                                        "cleared_amount": rounded_refund,
+                                        "outstanding_amount": rounded_outstanding,
+                                        "notes": f"Purchase return for invoice {invoice_no}. Refund amount: {rounded_refund:.2f}",
                                         "from_purchase_service": True
                                     }
                                     await rabbitmq_msg_obj.publish_event(
