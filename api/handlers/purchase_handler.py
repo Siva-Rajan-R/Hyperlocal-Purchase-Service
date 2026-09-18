@@ -270,7 +270,7 @@ class HandlePurchaseRequest:
     
     async def get_purchases_by_shop_id(self,data:GetPurchaseByShopIdSchema):
         res = await PurchaseReadDbRepo.get_by_shop_id(data=data)
-        if res is None or (isinstance(res, list) and not res):
+        if res is None:
             try:
                 res = await self.purchase_service_obj.get_purchase_by_shop_id(data=data)
             except Exception as e:

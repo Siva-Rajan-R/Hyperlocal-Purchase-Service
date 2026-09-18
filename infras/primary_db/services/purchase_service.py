@@ -1172,21 +1172,6 @@ class PurchaseService:
                 old_product_id = db_item.product_id
 
                 if item.product_id != old_product_id:
-                    from integrations.order_service import check_product_sales_exists
-                    sales_exist = await check_product_sales_exists(shop_id=data.shop_id, product_id=old_product_id)
-                    if sales_exist:
-                        from fastapi import HTTPException
-                        from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
-                        raise HTTPException(
-                            status_code=400,
-                            detail=ErrorResponseTypDict(
-                                msg="Error : Updating Purchase",
-                                status_code=400,
-                                description=f"Cannot change product '{old_product_id}' because sales have already occurred for this product",
-                                success=False
-                            )
-                        )
-                    
                     old_batch_id = db_item.batch_id
                     if not old_batch_id and existing_read_doc:
                         for ex_itm in existing_read_doc.get("items", []):
@@ -1430,20 +1415,6 @@ class PurchaseService:
                 stock_toupdate = item.stock_infos.stocks
                 stock_diff = stock_toupdate - prev_stocks
                 if item.product_id == old_product_id and stock_diff < 0:
-                    from integrations.order_service import check_product_sales_exists
-                    sales_exist = await check_product_sales_exists(shop_id=data.shop_id, product_id=item.product_id)
-                    if sales_exist:
-                        from fastapi import HTTPException
-                        from hyperlocal_platform.core.models.req_res_models import ErrorResponseTypDict
-                        raise HTTPException(
-                            status_code=400,
-                            detail=ErrorResponseTypDict(
-                                msg="Error : Updating Purchase",
-                                status_code=400,
-                                description=f"Cannot decrease stock for product '{item.product_id}' because sales have already occurred for this product",
-                                success=False
-                            )
-                        )
                     # Check stock sufficiency before decrementing for same product
                     target_stock_infos = {}
                     if has_variant and prev_variant_id:
@@ -2206,7 +2177,7 @@ class PurchaseService:
                         if paid_diff > 0:
                             update_type = "DECREMENT"
                             diff_amount = paid_diff
-                            notes_str = last_payment.get("notes") or f"Additional payment of {paid_diff} for purchase {getattr(fresh_pur, 'invoice_no', '')}"
+                            notes_str = last_payment.get("notes") or f"Purchase correction of {paid_diff} for purchase {getattr(fresh_pur, 'invoice_no', '')}"
                             if ref_suffix and ref_suffix not in notes_str:
                                 notes_str += ref_suffix
                             cleared_amt = float(paid_diff)
@@ -2532,6 +2503,8 @@ class PurchaseService:
 
 
         invoice_no = getattr(pur_db_res, 'invoice_no', None) or (read_doc.get("invoice_no") if read_doc else purchase_id)
+        pur_ui_id = getattr(pur_db_res, 'ui_id', None) or (read_doc.get("ui_id") if read_doc else None) or invoice_no or purchase_id
+        pur_name = f"{invoice_no} ({pur_ui_id})" if (invoice_no and pur_ui_id and invoice_no != pur_ui_id) else (invoice_no or pur_ui_id)
 
         # Handle DRAFT status
         if current_status and str(current_status).upper() == "DRAFT":
@@ -2550,8 +2523,8 @@ class PurchaseService:
             await _send_activity_log(
                 shop_id=shop_id,
                 action="CANCELED",
-                entity_id=purchase_id,
-                description=f"Canceled Draft Purchase {invoice_no} ({purchase_id})",
+                entity_id=str(pur_ui_id),
+                description=f"Canceled Draft Purchase {pur_name}",
                 entity_name=str(invoice_no)
             )
 
@@ -2927,8 +2900,8 @@ class PurchaseService:
         await _send_activity_log(
             shop_id=shop_id,
             action="CANCELED",
-            entity_id=purchase_id,
-            description=f"Canceled Purchase {invoice_no} ({purchase_id})",
+            entity_id=str(pur_ui_id),
+            description=f"Canceled Purchase {pur_name}",
             entity_name=str(invoice_no)
         )
 
@@ -3138,11 +3111,13 @@ class PurchaseService:
             ic(f"Failed to publish analytics event on purchase payment: {e}")
 
         # 9. Activity log
+        pur_ui_id = getattr(pg_res, 'ui_id', None) or (read_doc.get("ui_id") if read_doc else None) or invoice_no or purchase_id
+        pur_name = f"{invoice_no} ({pur_ui_id})" if (invoice_no and pur_ui_id and invoice_no != pur_ui_id) else (invoice_no or pur_ui_id)
         await _send_activity_log(
             shop_id=shop_id,
             action="PAYMENT_RECORDED",
-            entity_id=purchase_id,
-            description=f"Recorded payment of {amount_val} ({pay_method}) for Purchase {invoice_no}",
+            entity_id=str(pur_ui_id),
+            description=f"Recorded payment of {amount_val} ({pay_method}) for Purchase {pur_name}",
             entity_name=str(invoice_no)
         )
         

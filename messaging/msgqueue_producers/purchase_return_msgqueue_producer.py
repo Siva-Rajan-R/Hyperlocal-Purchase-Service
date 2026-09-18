@@ -159,6 +159,9 @@ class MessagingQueuePurchaseReturnProducer:
                                 asyncio.create_task(SupplierStatsReadDbRepo.update_supplier_stats(shop_id, supplier_id))
 
                         try:
+                            pur_ui_id = (existing_purchase.get("ui_id") or existing_purchase.get("invoice_no") or purchase_id) if existing_purchase else purchase_id
+                            invoice_no = existing_purchase.get("invoice_no") if existing_purchase else None
+                            pur_name = f"{invoice_no} ({pur_ui_id})" if (invoice_no and pur_ui_id and invoice_no != pur_ui_id) else (pur_ui_id or invoice_no)
                             rabbitmq_msg_obj = RabbitMQMessagingConfig()
                             await rabbitmq_msg_obj.publish_event(
                                 routing_key="activity_logs.routing.key",
@@ -169,9 +172,10 @@ class MessagingQueuePurchaseReturnProducer:
                                     "service": "Purchase-Order",
                                     "action": "RETURN",
                                     "entity_type": "PURCHASE-RETURN",
-                                    "entity_id": purchase_id,
-                                    "description": f"Returned purchase {purchase_id}",
-                                    "changes": [{"field": "id", "before": str(purchase_id), "after": "RETURN"}]
+                                    "entity_id": str(pur_ui_id),
+                                    "entity_name": str(pur_name),
+                                    "description": f"Returned purchase {pur_name}",
+                                    "changes": [{"field": "id", "before": str(pur_ui_id), "after": "RETURN"}]
                                 },
                                 headers={}
                             )

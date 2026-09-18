@@ -199,6 +199,7 @@ class ReturnService:
                     added_by_str = f"{u_name} - {u_email}"
 
                 # DECREMENT inventory stock upon returning to supplier
+                purchase_ui_id = read_db_purchase.get("ui_id") or read_db_purchase.get("invoice_no")
                 products_toupdate.append({
                     "shop_id": shop_id,
                     "product_id": target_item.get('product_id'),
@@ -209,7 +210,9 @@ class ReturnService:
                     "entity_name": "OFFLINE_PURCHASE_RETURN",
                     "type": "DECREMENT",
                     "create_stock_mov_adj": True,
-                    "ui_id": ui_id,
+                    "ui_id": purchase_ui_id or ui_id,
+                    "purchase_ui_id": purchase_ui_id,
+                    "return_ui_id": ui_id,
                     "purchase_id": purchase_id,
                     "added_by": added_by_str,
                     "user_id": u_ctx.get("user_id") or u_ctx.get("id"),

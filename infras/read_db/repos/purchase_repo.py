@@ -113,10 +113,17 @@ def build_purchase_mongo_query(base_query: dict, data) -> dict:
     if ex_out and ex_non_out:
         and_clauses.append({"_id": {"$exists": False}})  # Contradiction: match none
     elif ex_non_out:
+        and_clauses.append({"$or": [
+            {"outstanding_amount": {"$gt": 0}},
+            {"payment_status": {"$in": ["UNPAID", "unpaid", "NOT-PAID", "not-paid", "NOT_PAID", "not_paid", "PARTIAL", "partial", "PARTIAL_PAID", "partially_paid", "PARTIALY-PAID"]}}
+        ]})
         and_clauses.append({"payment_status": {"$nin": ["PAID", "paid", "COMPLETED", "completed", "Completed"]}})
         and_clauses.append({"status": {"$nin": ["CANCELED", "canceled", "CANCELLED", "cancelled"]}})
     elif ex_out:
-        and_clauses.append({"payment_status": {"$in": ["PAID", "paid", "COMPLETED", "completed", "Completed"]}})
+        and_clauses.append({"$or": [
+            {"outstanding_amount": {"$lte": 0}},
+            {"payment_status": {"$in": ["PAID", "paid", "COMPLETED", "completed", "Completed"]}}
+        ]})
 
     ex_ret = is_exclude_return(data)
     ex_non_ret = is_exclude_non_return(data)
