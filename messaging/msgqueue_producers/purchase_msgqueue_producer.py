@@ -253,12 +253,14 @@ class MessagingQueuePurchasegproducer:
 
                 if incoming_id and (prev_status_str.upper() == "DRAFT" or not prev_status_str):
                     purchase_id = incoming_id
-                    ui_id = existing_purchase_ui_id or (existing_read_doc.get("ui_id") if existing_read_doc else None)
+                    ui_id = purchase_data.get("ui_id") or existing_purchase_ui_id or (existing_read_doc.get("ui_id") if existing_read_doc else None)
                     if not ui_id:
                         ui_id = await fetch_ui_id_from_utility(shop_id=shop_id)
                 else:
-                    purchase_id = generate_uuid()
-                    ui_id = await fetch_ui_id_from_utility(shop_id=shop_id)
+                    purchase_id = incoming_id or generate_uuid()
+                    ui_id = purchase_data.get("ui_id") or existing_purchase_ui_id or (existing_read_doc.get("ui_id") if existing_read_doc else None)
+                    if not ui_id:
+                        ui_id = await fetch_ui_id_from_utility(shop_id=shop_id)
 
                 purchase_data['ui_id'] = ui_id
                 purchase_data['purchase_id'] = purchase_id

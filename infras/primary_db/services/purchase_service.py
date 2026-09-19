@@ -516,7 +516,18 @@ class PurchaseService:
             return False
 
         effective_id = requested_id if requested_id else generate_uuid()
-        ui_id = await fetch_ui_id_from_utility(shop_id=data.shop_id)
+        ui_id = getattr(data, 'ui_id', None)
+        if not ui_id and requested_id:
+            existing = await self.purchase_repo_obj.get_purchase_by_id(GetPurchaseByIdSchema(id=requested_id, shop_id=shop_id))
+            if existing and getattr(existing, 'ui_id', None):
+                ui_id = existing.ui_id
+            else:
+                from infras.read_db.repos.purchase_repo import PurchaseReadDbRepo
+                existing_read = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=requested_id, shop_id=shop_id))
+                if existing_read and existing_read.get("ui_id"):
+                    ui_id = existing_read.get("ui_id")
+        if not ui_id:
+            ui_id = await fetch_ui_id_from_utility(shop_id=data.shop_id)
 
         saga_id: str = generate_uuid()
         steps = {
@@ -2195,7 +2206,7 @@ class PurchaseService:
                             update_type = "DECREMENT"
                             diff_amount = abs(outstanding_diff)
                             notes_str = f"Purchase updated (cost reduced by {abs(outstanding_diff)})"
-                            cleared_amt = 0.0
+                            cleared_amt = float(diff_amount)
 
                         try:
                             supplier_payload = {
