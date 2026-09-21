@@ -190,22 +190,7 @@ class MessagingQueuePurchaseReturnProducer:
                                 supplier_id = existing_purchase.get("supplier_id") or (existing_purchase.get("supplier") or {}).get("supplier_id")
                                 if supplier_id:
                                     # payment_infos could be a dict like {"mode": "CASH", "amount": 100} or {"CASH": {"amount": 100}}
-                                    pay_method = "ON_CREDIT"
-                                    payment_infos = return_toadd.get("payment_infos", {})
-                                    if isinstance(payment_infos, dict) and len(payment_infos) > 0:
-                                        # First try to see if they passed 'mode', 'method', or 'type' directly
-                                        pay_method = payment_infos.get("mode") or payment_infos.get("method") or payment_infos.get("type")
-                                        if not pay_method:
-                                            # Fallback if they passed it as keys e.g. {"CASH": {"amount": 100}}
-                                            keys = [k for k in payment_infos.keys() if k not in ["amount", "reason", "mode", "method", "type", "ON_CREDIT", "notes"]]
-                                            if keys:
-                                                pay_method = keys[0]
-                                    elif isinstance(payment_infos, list) and len(payment_infos) > 0:
-                                        p_info = payment_infos[0]
-                                        pay_method = p_info.get("mode") or p_info.get("method") or p_info.get("type")
-                                        
-                                    if not pay_method:
-                                        pay_method = "ON_CREDIT"
+                                    pay_method = "ADJUSTED"
 
                                     rounded_refund = round(float(total_refund), 2)
                                     rounded_outstanding = round(float(new_invoice_outstanding), 2)
