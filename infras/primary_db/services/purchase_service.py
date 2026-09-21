@@ -999,7 +999,7 @@ class PurchaseService:
         mapped_items={item.id: item for item in pur_get_res.items}
         ic(mapped_items)
 
-        # Secondary map: (product_id, variant_id, batch_id) → db_item
+        # Secondary map: (product_id, variant_id, batch_id) -> db_item
         # Used to detect when a payload item without an ID matches an existing DB item
         mapped_items_by_product_combo = {}
         for db_item_x in pur_get_res.items:

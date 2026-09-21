@@ -20,7 +20,7 @@ async def inventory_service_lifespan(app:FastAPI):
         await init_infra_db()
         await init_inventory_pg_db()
         await check_redis_health()
-        print("[PURCHASE SERVICE] ✅ Database & Redis initialized. Ready for background tasks & exports.")
+        print("[PURCHASE SERVICE] [OK] Database & Redis initialized. Ready for background tasks & exports.")
         # await redis_client.flushdb()
         app.state.worker_task = asyncio.create_task(worker())
         yield
