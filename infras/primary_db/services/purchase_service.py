@@ -1069,7 +1069,7 @@ class PurchaseService:
             if not gst_type:
                 gst_type = "EXCLUSIVE"
 
-            if item_gst and item_gst.endswith('%') and gst_type == "EXCLUSIVE":
+            if item_gst and item_gst.endswith('%'):
                 try:
                     gst_rate = float(item_gst[:-1]) / 100.0
                     temp_total_gst_amount += gst_rate * tot_pur_cost
@@ -1083,7 +1083,14 @@ class PurchaseService:
         
         final_total_cost = float(temp_total_pur_cost + temp_total_gst_amount)
         charges_infos = data.charges_infos.model_dump(mode="json") if data.charges_infos else (existing_read_doc.get("charges_infos") if existing_read_doc else {})
-        total_purchase_cost = final_total_cost
+        transport_ch = float(charges_infos.get("transport_charge", 0) or 0)
+        other_ch = float(charges_infos.get("other_charge", 0) or 0)
+        calc_infos = data.calculation_infos.model_dump(mode="json") if data.calculation_infos else (existing_read_doc.get("calculations") if existing_read_doc else {})
+        distribute_by = str(calc_infos.get("distribute_by", "NONE")).upper() if isinstance(calc_infos, dict) else "NONE"
+        if distribute_by == "NONE":
+            total_purchase_cost = final_total_cost + transport_ch + other_ch
+        else:
+            total_purchase_cost = final_total_cost
         
         if round(total_amount_paid, 2) > round(total_purchase_cost, 2):
             from fastapi import HTTPException
@@ -1900,8 +1907,7 @@ class PurchaseService:
                     except ValueError:
                         pass
                 
-                gst_infos_val = data.gst_infos if hasattr(data, "gst_infos") and data.gst_infos else (existing_read_doc.get("gst_infos") if existing_read_doc else {})
-                if gst_infos_val and gst_infos_val.get("type") == "EXCLUSIVE":
+                if gst_rate > 0:
                     total_gst_amount += gst_rate * total_amount
                     
                 variant_infos_model = None
@@ -2005,7 +2011,12 @@ class PurchaseService:
             charges_infos = data.charges_infos.model_dump(mode="json") if data.charges_infos else (existing_read_doc.get("charges_infos") if existing_read_doc else {})
             transport_ch = float(charges_infos.get("transport_charge", 0) or 0)
             other_ch = float(charges_infos.get("other_charge", 0) or 0)
-            total_purchase_cost = final_total_cost
+            calc_infos = data.calculation_infos.model_dump(mode="json") if data.calculation_infos else (existing_read_doc.get("calculations") if existing_read_doc else {})
+            distribute_by = str(calc_infos.get("distribute_by", "NONE")).upper() if isinstance(calc_infos, dict) else "NONE"
+            if distribute_by == "NONE":
+                total_purchase_cost = final_total_cost + transport_ch + other_ch
+            else:
+                total_purchase_cost = final_total_cost
             
             if round(total_amount_paid, 2) > round(total_purchase_cost, 2):
                 from fastapi import HTTPException
@@ -2042,6 +2053,20 @@ class PurchaseService:
                             cf_dict[v["field_name"]] = v["value"]
                 else:
                     cf_dict = cf_data
+
+            gst_infos_val = data.gst_infos.model_dump(mode="json") if data.gst_infos else (existing_read_doc.get("gst_infos") if existing_read_doc else (fresh_pur.gst_infos if hasattr(fresh_pur, 'gst_infos') and fresh_pur.gst_infos else {}))
+
+            raw_created_at = existing_read_doc.get("created_at") if existing_read_doc else None
+            import datetime
+            if isinstance(raw_created_at, str):
+                try:
+                    c_at = datetime.datetime.fromisoformat(raw_created_at.replace("Z", "+00:00"))
+                except Exception:
+                    c_at = fresh_pur.created_at or datetime.datetime.utcnow()
+            elif isinstance(raw_created_at, datetime.datetime):
+                c_at = raw_created_at
+            else:
+                c_at = fresh_pur.created_at or datetime.datetime.utcnow()
                     
             purchase_read_model = PurchaseReadModel(
                 purchase_id=fresh_pur.id,
@@ -2051,23 +2076,33 @@ class PurchaseService:
                 shop_id=fresh_pur.shop_id,
                 purchase_date=fresh_pur.date,
                 supplier=supplier_info,
-                total_cost=final_total_cost,
-                total_items=len(read_items),
-                total_quantity=total_pur_stocks,
                 payment_infos=payment_infos_dicts,
-                charges_infos=data.charges_infos.model_dump(mode="json") if data.charges_infos else (existing_read_doc.get("charges_infos") if existing_read_doc else {}),
+                charges_infos=charges_infos,
                 gst_infos=gst_infos_val,
                 payment_status=outstanding_status,
                 outstanding_amount=outstanding_amount,
                 calculations=data.calculation_infos.model_dump(mode="json") if data.calculation_infos else (existing_read_doc.get("calculations") if existing_read_doc else {}),
                 custom_fields=cf_dict,
                 items=read_items,
-                item_infos=item_infos,
+                item_infos={
+                    'total_pur_items': len(read_items),
+                    'total_pur_stocks': total_pur_stocks,
+                    'total_pur_cost': total_pur_cost,
+                    'total_gst_amount': total_gst_amount
+                },
                 version=new_version,
                 update_count=new_update_count,
                 max_updates=const.PURCHASE_UPDATE_LIMIT,
                 can_update=(new_update_count < const.PURCHASE_UPDATE_LIMIT),
-                paid_amount=total_amount_paid
+                paid_amount=total_amount_paid,
+                added_by=existing_read_doc.get("added_by") if existing_read_doc else None,
+                user_id=existing_read_doc.get("user_id") if existing_read_doc else None,
+                user_name=existing_read_doc.get("user_name") if existing_read_doc else None,
+                user_email=existing_read_doc.get("user_email") if existing_read_doc else None,
+                user_role=existing_read_doc.get("user_role") if existing_read_doc else None,
+                user_info=existing_read_doc.get("user_info") if existing_read_doc else None,
+                created_at=c_at,
+                updated_at=datetime.datetime.utcnow()
             )
             
             # Save history copy to PG

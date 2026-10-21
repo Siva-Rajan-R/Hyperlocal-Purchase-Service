@@ -198,7 +198,7 @@ class HandlePurchaseRequest:
         valid_custom_fields = validate_and_filter_custom_fields(data.custom_fields, defined_fields)
         
         final_data = UpdatePurchaseSchema(custom_fields=valid_custom_fields,**data.model_dump(exclude=['custom_fields']))
-        res = await self.purchase_service_obj.update(data=final_data)
+        res = await self.purchase_service_obj.update(data=final_data, user_id=user_id)
 
         if res:
              return SuccessResponseTypDict(
