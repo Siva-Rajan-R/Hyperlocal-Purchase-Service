@@ -28,5 +28,6 @@ PURCHAESE_COLLECTION=DB['PurchaseCollections']
 PURCHASE_STATS_COLLECTION=DB['PurchaseStatsCollections']
 SUPPLIER_STATS_COLLECTION=DB['SupplierStatsCollections']
 
-
-
+INVENTORY_DB=MONGO_CLIENT["InventoryServiceReadDb"]
+INVENTORY_COLLECTION=INVENTORY_DB['InventoryCollections']
+PROD_INV_COLLECTION=INVENTORY_DB['ProdInvCollections']
