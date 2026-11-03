@@ -72,6 +72,58 @@ class HandlePurchaseRequest:
         self.purchase_service_obj=PurchaseService(session=session)
         self.purchase_types=PurchaseTypeEnums._value2member_map_.values()
 
+    async def _validate_selling_price_vs_mrp(self, items, shop_id: str):
+        if not items:
+            return
+        from infras.read_db.main import INVENTORY_COLLECTION
+        for item in items:
+            pricing = getattr(item, "pricing_infos", None)
+            sp = getattr(pricing, "sell_price", None) if pricing else None
+            if sp is not None and float(sp) > 0:
+                item_mrp = None
+                if pricing and getattr(pricing, "mrp", None) is not None:
+                    try:
+                        item_mrp = float(pricing.mrp)
+                    except (ValueError, TypeError):
+                        item_mrp = None
+                elif getattr(item, "mrp", None) is not None:
+                    try:
+                        item_mrp = float(item.mrp)
+                    except (ValueError, TypeError):
+                        item_mrp = None
+
+                # If MRP is not in payload, query inventory read db collection
+                if item_mrp is None or item_mrp <= 0:
+                    try:
+                        inv_doc = await INVENTORY_COLLECTION.find_one({"id": item.product_id, "shop_id": shop_id})
+                        if inv_doc:
+                            if item.variant_id and inv_doc.get("variants"):
+                                for v in inv_doc.get("variants", []):
+                                    if v.get("id") == item.variant_id:
+                                        vm = v.get("datas", {}).get("mrp") if isinstance(v.get("datas"), dict) else v.get("mrp")
+                                        if vm and float(vm) > 0:
+                                            item_mrp = float(vm)
+                                        break
+                            if item_mrp is None or item_mrp <= 0:
+                                pm = inv_doc.get("datas", {}).get("mrp") if isinstance(inv_doc.get("datas"), dict) else inv_doc.get("mrp")
+                                if pm and float(pm) > 0:
+                                    item_mrp = float(pm)
+                    except Exception as e:
+                        ic(f"Error querying inventory for MRP check: {e}")
+
+                if item_mrp is not None and item_mrp > 0:
+                    if float(sp) > item_mrp:
+                        prod_name = getattr(item, "name", None) or item.product_id
+                        raise HTTPException(
+                            status_code=400,
+                            detail=ErrorResponseTypDict(
+                                msg="Invalid Pricing",
+                                status_code=400,
+                                description=f"Selling price (₹{float(sp):.2f}) cannot exceed MRP (₹{item_mrp:.2f}) for product '{prod_name}'. Maximum allowable selling price is MRP.",
+                                success=False
+                            )
+                        )
+
     async def create(self,data:CreatePurchaseSchema, executing_user_id: Optional[str] = None):
         if data.type.value!=PurchaseTypeEnums.DIRECT.value:
             raise HTTPException(
@@ -142,6 +194,9 @@ class HandlePurchaseRequest:
                         )
                     product_serial_numbers[product_variant_key].add(sn_str)
         
+        # Validate selling price vs MRP on all items
+        await self._validate_selling_price_vs_mrp(data.items, data.shop_id)
+        
         # for checking the custome fields
         defined_fields = await CustomFieldsService(session=self.session).get_field_by_shop_id(data=GetFieldByShopIdSchema(shop_id=data.shop_id))
         valid_custom_fields = validate_and_filter_custom_fields(payload_custom_fields=data.custom_fields, defined_custom_fields=defined_fields)
@@ -198,6 +253,8 @@ class HandlePurchaseRequest:
         valid_custom_fields = validate_and_filter_custom_fields(data.custom_fields, defined_fields)
         
         final_data = UpdatePurchaseSchema(custom_fields=valid_custom_fields,**data.model_dump(exclude=['custom_fields']))
+        if final_data.items:
+            await self._validate_selling_price_vs_mrp(final_data.items, final_data.shop_id)
         res = await self.purchase_service_obj.update(data=final_data, user_id=user_id)
 
         if res:

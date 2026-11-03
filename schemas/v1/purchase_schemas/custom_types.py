@@ -43,6 +43,7 @@ class PurchaseStorageLocationInfos(BaseModel):
 class PurchasePricingInfos(BaseModel):
     buy_price:float
     sell_price:float
+    mrp: Optional[float] = None
 
 class PurchaseSerialnoInfosType(BaseModel):
     id: Optional[str] = None

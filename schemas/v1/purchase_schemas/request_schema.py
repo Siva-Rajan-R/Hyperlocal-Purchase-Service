@@ -18,6 +18,7 @@ class CreatePurchaseItemsSchema(BaseModel):
     pricing_infos:PurchasePricingInfos
     gst:str
     stock_infos:PurchaseStocksInfosType
+    mrp: Optional[float] = None
 
 class UpdatePurchaseItemsSchema(BaseModel):
     id: Optional[str] = None
@@ -30,6 +31,7 @@ class UpdatePurchaseItemsSchema(BaseModel):
     pricing_infos: Optional[PurchasePricingInfos] = None
     gst: Optional[str] = None
     stock_infos: Optional[PurchaseStocksInfosType] = None
+    mrp: Optional[float] = None
 
 
 # PURCHAASE PRICING
