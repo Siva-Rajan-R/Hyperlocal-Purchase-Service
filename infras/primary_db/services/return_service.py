@@ -49,6 +49,7 @@ class ReturnService:
             products_toupdate = []
             total_refund_qty = 0.0
             total_refund_amount = 0.0
+            total_refund_gst_amount = 0.0
 
             for itm in data.items:
                 itm_dict = itm.model_dump()
@@ -143,22 +144,36 @@ class ReturnService:
                             detail=f"Cannot return {inc_quantity} units of '{item_name}' because current physical stock in inventory is only {physical_stock} units."
                         )
 
-                buy_price = float(target_item.get('buy_price', 0.0) or (target_item.get('pricing_infos', {}).get('buy_price', 0.0) if isinstance(target_item.get('pricing_infos'), dict) else 0.0))
+                pricing_infos_raw = target_item.get('pricing_infos')
+                buy_price_from_pricing = 0.0
+                if isinstance(pricing_infos_raw, dict):
+                    buy_price_from_pricing = float(pricing_infos_raw.get('buy_price', 0.0) or 0.0)
+                elif isinstance(pricing_infos_raw, list) and len(pricing_infos_raw) > 0 and isinstance(pricing_infos_raw[0], dict):
+                    buy_price_from_pricing = float(pricing_infos_raw[0].get('buy_price', 0.0) or 0.0)
+
+                buy_price = float(target_item.get('buy_price', 0.0) or buy_price_from_pricing or target_item.get('rate', 0.0) or 0.0)
                 
                 # Check if purchase had EXCLUSIVE GST
-                item_gst = target_item.get('gst') or "0%"
+                item_gst = target_item.get('gst') or target_item.get('gst_rate') or target_item.get('tax_gst') or "0%"
                 gst_infos_val = read_db_purchase.get("gst_infos") or {}
-                gst_type = gst_infos_val.get("type", "EXCLUSIVE") if isinstance(gst_infos_val, dict) else "EXCLUSIVE"
+                gst_type = str(
+                    (gst_infos_val.get("type") if isinstance(gst_infos_val, dict) else "")
+                    or (read_db_purchase.get("calculation_infos") or {}).get("gst_type")
+                    or (read_db_purchase.get("calculations") or {}).get("gst_type")
+                    or "EXCLUSIVE"
+                ).upper()
                 
                 gst_rate = 0.0
-                if item_gst and isinstance(item_gst, str) and item_gst.endswith('%') and gst_type == "EXCLUSIVE":
+                if item_gst and gst_type == "EXCLUSIVE":
                     try:
-                        gst_rate = float(item_gst[:-1]) / 100.0
-                    except ValueError:
+                        clean_gst = str(item_gst).replace('%', '').strip()
+                        gst_rate = float(clean_gst) / 100.0
+                    except (ValueError, TypeError):
                         pass
 
                 unit_cost_with_gst = buy_price * (1.0 + gst_rate)
                 total_return_qty_amount = inc_quantity * unit_cost_with_gst
+                item_gst_amount = inc_quantity * (buy_price * gst_rate)
 
                 founded_serialno = []
                 existing_serials = target_item.get('serial_numbers') or target_item.get('serialno_infos') or []
@@ -225,6 +240,7 @@ class ReturnService:
 
                 total_refund_qty += inc_quantity
                 total_refund_amount += total_return_qty_amount
+                total_refund_gst_amount += item_gst_amount
 
                 return_items_toadd.append({
                     'id': generate_uuid(),
@@ -234,10 +250,18 @@ class ReturnService:
                     'quantity': inc_quantity,
                     'entered_qty': itm_dict['quantity'],
                     'entered_unit': itm_dict.get('unit') or base_unit_name,
-                    'refund_amount': total_return_qty_amount,
+                    'buy_price': buy_price,
+                    'gst': item_gst,
+                    'gst_rate': gst_rate * 100.0,
+                    'gst_amount': round(item_gst_amount, 2),
+                    'refund_amount': round(total_return_qty_amount, 2),
                     'reason': itm_dict.get('reason'),
                     'serialno_infos': founded_serialno
                 })
+
+            if isinstance(payment_infos, dict):
+                payment_infos.setdefault("total_gst_amount", round(total_refund_gst_amount, 2))
+                payment_infos.setdefault("gst_amount", round(total_refund_gst_amount, 2))
 
             return_toadd = {
                 "id": return_id,
@@ -248,7 +272,8 @@ class ReturnService:
                 "status": "COMPLETED",
                 "payment_infos": payment_infos,
                 "total_refund_qty": total_refund_qty,
-                "total_refund_amount": total_refund_amount
+                "total_refund_amount": round(total_refund_amount, 2),
+                "total_gst_amount": round(total_refund_gst_amount, 2)
             }
 
             purchase_return_data = {

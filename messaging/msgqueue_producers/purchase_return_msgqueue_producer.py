@@ -41,9 +41,11 @@ class MessagingQueuePurchaseReturnProducer:
                 async with AsyncInventoryLocalSession() as session:
                     return_repo_obj = ReturnRepo(session=session)
 
+                    allowed_return_cols = {'id', 'ui_id', 'sequence_id', 'purchase_id', 'shop_id', 'supplier_id', 'total_refund_amount', 'total_refund_qty', 'payment_infos', 'status', 'created_at', 'updated_at'}
+                    return_pg_dict = {k: v for k, v in return_toadd.items() if k in allowed_return_cols}
                     await return_repo_obj.create_return_with_items(
-                        return_obj=PurchaseReturns(**return_toadd),
-                        return_items=[PurchaseReturnItems(**{k: v for k, v in itm.items() if k not in ('serialno_infos',)}) for itm in return_items_toadd]
+                        return_obj=PurchaseReturns(**return_pg_dict),
+                        return_items=[PurchaseReturnItems(**{k: v for k, v in itm.items() if k in ('id', 'return_id', 'purchase_item_id', 'product_id', 'quantity', 'entered_qty', 'entered_unit', 'refund_amount', 'reason')}) for itm in return_items_toadd]
                     )
 
                     ic("Purchase Return Process Completed in Primary DB")
@@ -71,7 +73,18 @@ class MessagingQueuePurchaseReturnProducer:
                                 }
 
                                 original_item = next((orig for orig in existing_purchase.get("items", []) if orig.get("id") == itm.get("purchase_item_id")), None)
+                                orig_buy_price = 0.0
+                                orig_gst = itm.get("gst") or "0%"
                                 if original_item:
+                                    orig_pricing = original_item.get("pricing_infos")
+                                    buy_from_pricing = 0.0
+                                    if isinstance(orig_pricing, dict):
+                                        buy_from_pricing = float(orig_pricing.get("buy_price", 0.0) or 0.0)
+                                    elif isinstance(orig_pricing, list) and len(orig_pricing) > 0 and isinstance(orig_pricing[0], dict):
+                                        buy_from_pricing = float(orig_pricing[0].get("buy_price", 0.0) or 0.0)
+
+                                    orig_buy_price = float(original_item.get("buy_price") or buy_from_pricing or itm.get("buy_price", 0.0) or 0.0)
+                                    orig_gst = original_item.get("gst") or itm.get("gst") or orig_gst
                                     formatted_item.update({
                                         "name": original_item.get("name"),
                                         "ui_id": original_item.get("ui_id"),
@@ -80,10 +93,24 @@ class MessagingQueuePurchaseReturnProducer:
                                         "variant_infos": original_item.get("variant_infos"),
                                         "batch_infos": original_item.get("batch_infos"),
                                         "serialno_infos": itm.get("serialno_infos") or [],
-                                        "buy_price": original_item.get("buy_price"),
+                                        "buy_price": orig_buy_price,
                                         "sell_price": original_item.get("sell_price"),
-                                        "gst": original_item.get("gst")
+                                        "gst": orig_gst
                                     })
+                                else:
+                                    formatted_item.update({
+                                        "buy_price": itm.get("buy_price", 0.0),
+                                        "gst": orig_gst,
+                                    })
+
+                                item_gst_amt = itm.get("gst_amount")
+                                if item_gst_amt is None:
+                                    try:
+                                        gst_clean = float(str(orig_gst).replace('%', '').strip())
+                                        item_gst_amt = round(float(itm.get("quantity", 0)) * orig_buy_price * (gst_clean / 100.0), 2)
+                                    except Exception:
+                                        item_gst_amt = 0.0
+                                formatted_item["gst_amount"] = item_gst_amt
 
                                 return_items_formatted.append(formatted_item)
 
@@ -119,6 +146,7 @@ class MessagingQueuePurchaseReturnProducer:
                                 "status": return_toadd.get("status", "COMPLETED"),
                                 "total_refund_amount": return_toadd.get("total_refund_amount", 0.0),
                                 "total_refund_qty": return_toadd.get("total_refund_qty", 0.0),
+                                "total_gst_amount": return_toadd.get("total_gst_amount", 0.0),
                                 "payment_infos": return_toadd.get("payment_infos", {}),
                                 "created_at": return_toadd.get("created_at"),
                                 "updated_at": return_toadd.get("updated_at"),
