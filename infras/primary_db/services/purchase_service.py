@@ -2990,15 +2990,24 @@ class PurchaseService:
         read_doc = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=purchase_id, shop_id=shop_id))
         
         from ..models.purchase_model import Purchase
-        from sqlalchemy import select, update
-        stmt = select(Purchase).where(Purchase.id == purchase_id, Purchase.shop_id == shop_id)
-        pg_res = (await self.session.execute(stmt)).scalar_one_or_none()
+        from sqlalchemy import select, update, or_
+        stmt = select(Purchase).where(
+            Purchase.shop_id == shop_id,
+            or_(
+                Purchase.id == purchase_id,
+                Purchase.ui_id == purchase_id,
+                Purchase.invoice_no == purchase_id
+            )
+        )
+        pg_res = (await self.session.execute(stmt)).scalars().first()
         
         if not read_doc and not pg_res:
-            return {"success": False, "msg": "Purchase not found"}
+            return {"success": False, "msg": f"Purchase '{purchase_id}' not found"}
         
+        canonical_purchase_id = (pg_res.id if pg_res else None) or (read_doc.get("purchase_id") if read_doc else None) or (read_doc.get("id") if read_doc else None) or purchase_id
         supplier_id = (read_doc.get("supplier", {}).get("supplier_id") if read_doc and isinstance(read_doc.get("supplier"), dict) else None) or (getattr(pg_res, "supplier_id", None) if pg_res else None) or data.supplier_id
         invoice_no = (read_doc.get("invoice_no") if read_doc else None) or (getattr(pg_res, "invoice_no", None) if pg_res else None) or (read_doc.get("ui_id") if read_doc else None) or (getattr(pg_res, "ui_id", None) if pg_res else None) or data.invoice_no or ""
+        pur_ui_id = (read_doc.get("ui_id") if read_doc else None) or (getattr(pg_res, "ui_id", None) if pg_res else None) or invoice_no or purchase_id
         
         # 2. Get current payment list
         current_payments = []
@@ -3030,15 +3039,43 @@ class PurchaseService:
         if data.notes:
             new_pay_entry["notes"] = str(data.notes).strip()
         
-        updated_payments = list(current_payments) + [new_pay_entry]
-        
-        # 4. Calculate total amounts, outstanding and status
+        # Calculate total amounts and current outstanding before applying payment
         item_infos = (read_doc.get("item_infos") if read_doc else {}) or (pg_res.item_infos if pg_res else {}) or {}
-        total_pur_cost = float(item_infos.get("total_pur_cost", 0) + item_infos.get("total_gst_amount", 0))
-        if total_pur_cost == 0 and read_doc and read_doc.get("calculations"):
-            total_pur_cost = float(read_doc.get("calculations", {}).get("total_amount", 0))
-            
-        total_amount_paid = sum(float(p.get("amount", 0)) for p in updated_payments)
+        calc_dict = (read_doc.get("calculations") if read_doc else {}) or (pg_res.calculation_infos if pg_res else {}) or {}
+        
+        calc_total = float(calc_dict.get("total_amount", 0) or calc_dict.get("grand_total", 0) or 0)
+        doc_total = float(read_doc.get("total_amount", 0) or read_doc.get("amount", 0) or 0) if read_doc else 0.0
+        items_total = float(item_infos.get("total_pur_cost", 0) + item_infos.get("total_gst_amount", 0))
+        total_pur_cost = calc_total or doc_total or items_total
+
+        current_amount_paid = sum(float(p.get("amount", 0)) for p in current_payments)
+        
+        recorded_outstanding = None
+        if read_doc and read_doc.get("outstanding_amount") is not None:
+            try:
+                recorded_outstanding = float(read_doc.get("outstanding_amount"))
+            except Exception:
+                pass
+        
+        computed_outstanding = max(0.0, round(total_pur_cost - current_amount_paid, 2))
+        current_outstanding = recorded_outstanding if recorded_outstanding is not None else computed_outstanding
+
+        if current_outstanding <= 0:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail=f"Purchase ({invoice_no or purchase_id}) has already been fully paid with ₹0 outstanding."
+            )
+
+        if amount_val > current_outstanding + 0.01:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail=f"Payment amount (₹{amount_val:,.2f}) cannot exceed purchase outstanding balance (₹{current_outstanding:,.2f})"
+            )
+
+        updated_payments = list(current_payments) + [new_pay_entry]
+        total_amount_paid = current_amount_paid + amount_val
         outstanding_amount = max(0.0, round(total_pur_cost - total_amount_paid, 2))
         
         if outstanding_amount == 0:
@@ -3052,7 +3089,7 @@ class PurchaseService:
         if pg_res:
             stmt_update = (
                 update(Purchase)
-                .where(Purchase.id == purchase_id, Purchase.shop_id == shop_id)
+                .where(Purchase.id == canonical_purchase_id, Purchase.shop_id == shop_id)
                 .values(
                     payment_infos=updated_payments
                 )
@@ -3064,7 +3101,7 @@ class PurchaseService:
         from infras.read_db.main import PURCHAESE_COLLECTION
         from infras.read_db.repos.purchase_repo import PurchaseStatsReadDbRepo, SupplierStatsReadDbRepo
         await PURCHAESE_COLLECTION.update_one(
-            {"purchase_id": purchase_id, "shop_id": shop_id},
+            {"$or": [{"purchase_id": canonical_purchase_id}, {"id": canonical_purchase_id}], "shop_id": shop_id},
             {"$set": {
                 "payment_infos": updated_payments,
                 "paid_amount": total_amount_paid,
@@ -3102,6 +3139,7 @@ class PurchaseService:
                             "payment_method": pay_method,
                             "notes": notes_str,
                             "cleared_amount": amount_val,
+                            "outstanding_amount": outstanding_amount,
                             "from_purchase_service": True
                         }
                     )
@@ -3157,15 +3195,17 @@ class PurchaseService:
             ic(f"Failed to publish analytics event on purchase payment: {e}")
 
         # 9. Activity log
-        pur_ui_id = getattr(pg_res, 'ui_id', None) or (read_doc.get("ui_id") if read_doc else None) or invoice_no or purchase_id
-        pur_name = f"{invoice_no} ({pur_ui_id})" if (invoice_no and pur_ui_id and invoice_no != pur_ui_id) else (invoice_no or pur_ui_id)
-        await _send_activity_log(
-            shop_id=shop_id,
-            action="PAYMENT_RECORDED",
-            entity_id=str(pur_ui_id),
-            description=f"Recorded payment of {amount_val} ({pay_method}) for Purchase {pur_name}",
-            entity_name=str(invoice_no)
-        )
+        try:
+            pur_name = f"{invoice_no} ({pur_ui_id})" if (invoice_no and pur_ui_id and invoice_no != pur_ui_id) else (invoice_no or pur_ui_id)
+            await _send_activity_log(
+                shop_id=shop_id,
+                action="PAYMENT_RECORDED",
+                entity_id=str(pur_ui_id),
+                description=f"Recorded payment of {amount_val} ({pay_method}) for Purchase {pur_name}",
+                entity_name=str(invoice_no)
+            )
+        except Exception as e:
+            ic(f"Failed to record activity log on purchase payment: {e}")
         
         return {
             "success": True,

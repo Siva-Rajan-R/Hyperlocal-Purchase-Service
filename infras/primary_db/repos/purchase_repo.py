@@ -356,6 +356,22 @@ class PurchaseRepo:
         
         if getattr(data, 'status', None):
             conds.append(Purchase.status == data.status)
+
+        if getattr(data, 'payment_status', None):
+            conds.append(Purchase.payment_status.ilike(f"%{data.payment_status}%"))
+
+        if getattr(data, 'payment_method', None):
+            pm_val = str(data.payment_method).strip().upper()
+            if pm_val in ("CREDIT", "ON_CREDIT", "ON CREDIT"):
+                conds.append(or_(
+                    func.cast(Purchase.payment_infos, String).ilike("%CREDIT%"),
+                    Purchase.outstanding_amount > 0,
+                    Purchase.payment_status.in_(["PENDING", "UNPAID", "NOT-PAID", "NOT_PAID", "PARTIAL"])
+                ))
+            elif pm_val in ("BANK", "BANK_TRANSFER", "BANK TRANSFER"):
+                conds.append(func.cast(Purchase.payment_infos, String).ilike("%BANK%"))
+            else:
+                conds.append(func.cast(Purchase.payment_infos, String).ilike(f"%{pm_val}%"))
         
         status_nin = []
         if is_exclude_canceled(data) or getattr(data, 'outstanding', None) or is_exclude_non_outstanding(data):
@@ -425,6 +441,22 @@ class PurchaseRepo:
 
         if getattr(data, 'status', None):
             conds.append(Purchase.status == data.status)
+
+        if getattr(data, 'payment_status', None):
+            conds.append(Purchase.payment_status.ilike(f"%{data.payment_status}%"))
+
+        if getattr(data, 'payment_method', None):
+            pm_val = str(data.payment_method).strip().upper()
+            if pm_val in ("CREDIT", "ON_CREDIT", "ON CREDIT"):
+                conds.append(or_(
+                    func.cast(Purchase.payment_infos, String).ilike("%CREDIT%"),
+                    Purchase.outstanding_amount > 0,
+                    Purchase.payment_status.in_(["PENDING", "UNPAID", "NOT-PAID", "NOT_PAID", "PARTIAL"])
+                ))
+            elif pm_val in ("BANK", "BANK_TRANSFER", "BANK TRANSFER"):
+                conds.append(func.cast(Purchase.payment_infos, String).ilike("%BANK%"))
+            else:
+                conds.append(func.cast(Purchase.payment_infos, String).ilike(f"%{pm_val}%"))
 
         status_nin_shop = []
         if is_exclude_canceled(data) or getattr(data, 'outstanding', None) or is_exclude_non_outstanding(data):

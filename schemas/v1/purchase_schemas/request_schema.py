@@ -142,6 +142,8 @@ class GetAllPurchaseSchemas(BaseModel):
     query: Optional[str] = Field(default=None, alias='q')
     q: Optional[str] = None
     status: Optional[str] = None
+    payment_status: Optional[str] = None
+    payment_method: Optional[str] = None
     outstanding: Optional[bool] = None
     from_date: Optional[str] = None
     to_date: Optional[str] = None
@@ -206,6 +208,8 @@ class GetPurchaseByShopIdSchema(BaseModel):
     shop_id: str
     supplier_id: Optional[str] = None
     status: Optional[str] = None
+    payment_status: Optional[str] = None
+    payment_method: Optional[str] = None
     outstanding: Optional[bool] = None
     from_date: Optional[str] = None
     to_date: Optional[str] = None

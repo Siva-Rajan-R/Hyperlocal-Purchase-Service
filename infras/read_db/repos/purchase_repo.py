@@ -1,3 +1,4 @@
+import re
 from ..main import PURCHAESE_COLLECTION, PURCHASE_STATS_COLLECTION, SUPPLIER_STATS_COLLECTION
 from ..models.purchase_model import PurchaseReadModel
 from icecream import ic
@@ -96,6 +97,73 @@ def build_purchase_mongo_query(base_query: dict, data) -> dict:
         status_nin.extend(["DRAFT", "draft", "Draft"])
     if status_nin:
         and_clauses.append({"status": {"$nin": list(set(status_nin))}})
+
+    req_pm_status = getattr(data, 'payment_status', None)
+    if req_pm_status and str(req_pm_status).strip().upper() not in ["ALL", ""]:
+        pm_upper = str(req_pm_status).strip().upper()
+        if pm_upper in ["PAID", "COMPLETED"]:
+            and_clauses.append({"payment_status": {"$in": ["PAID", "paid", "COMPLETED", "completed", "Paid", "Completed"]}})
+        elif pm_upper in ["PARTIAL", "PARTIALLY", "PARTIAL_PAID", "PARTIALLY_PAID"]:
+            and_clauses.append({"payment_status": {"$in": [
+                "PARTIAL", "partial", "Partial",
+                "PARTIALLY_PAID", "partially_paid", "Partially_Paid",
+                "PARTIAL_PAID", "partial_paid",
+                "PARTIALLY-PAID", "partially-paid",
+                "PARTIALY-PAID"
+            ]}})
+        elif pm_upper in ["PENDING", "UNPAID", "NOT-PAID", "NOT_PAID"]:
+            and_clauses.append({"payment_status": {"$in": [
+                "PENDING", "pending", "Pending",
+                "NOT-PAID", "not-paid", "Not-Paid",
+                "NOT_PAID", "not_paid",
+                "UNPAID", "unpaid", "Unpaid"
+            ]}})
+        else:
+            and_clauses.append({"payment_status": req_pm_status})
+
+    req_pm_method = getattr(data, 'payment_method', None)
+    if req_pm_method and str(req_pm_method).strip().upper() not in ["ALL", ""]:
+        pm_clean = str(req_pm_method).strip().upper()
+        if pm_clean in ["CREDIT", "ON_CREDIT", "ON CREDIT"]:
+            credit_regex = re.compile(r"credit", re.IGNORECASE)
+            and_clauses.append({
+                "$or": [
+                    {"outstanding_amount": {"$gt": 0}},
+                    {"payment_status": {"$in": ["PENDING", "pending", "UNPAID", "unpaid", "NOT-PAID", "not-paid", "NOT_PAID", "not_paid", "PARTIAL", "partial", "PARTIAL_PAID", "partially_paid"]}},
+                    {"payment_infos": {"$elemMatch": {"$or": [
+                        {"method": credit_regex},
+                        {"payment_method": credit_regex},
+                        {"mode": credit_regex}
+                    ]}}},
+                    {"payment_method": credit_regex}
+                ]
+            })
+        elif pm_clean in ["BANK", "BANK_TRANSFER", "BANK TRANSFER"]:
+            bank_regex = re.compile(r"bank", re.IGNORECASE)
+            and_clauses.append({
+                "$or": [
+                    {"payment_infos": {"$elemMatch": {"$or": [
+                        {"method": bank_regex},
+                        {"payment_method": bank_regex},
+                        {"mode": bank_regex}
+                    ]}}},
+                    {"payment_info.method": bank_regex},
+                    {"payment_method": bank_regex}
+                ]
+            })
+        else:
+            method_regex = re.compile(f"^{re.escape(pm_clean)}$", re.IGNORECASE)
+            and_clauses.append({
+                "$or": [
+                    {"payment_infos": {"$elemMatch": {"$or": [
+                        {"method": method_regex},
+                        {"payment_method": method_regex},
+                        {"mode": method_regex}
+                    ]}}},
+                    {"payment_info.method": method_regex},
+                    {"payment_method": method_regex}
+                ]
+            })
 
     pm_nin = []
     if is_exclude_not_paid(data):
@@ -309,7 +377,14 @@ class PurchaseReadDbRepo:
     ) -> List[dict]:
         base = {"shop_id": data.shop_id}
         if getattr(data, 'supplier_id', None):
-            base["supplier_id"] = data.supplier_id
+            supp_val = str(data.supplier_id).strip()
+            base["$or"] = [
+                {"supplier.supplier_id": supp_val},
+                {"supplier.id": supp_val},
+                {"supplier_id": supp_val},
+                {"supplier.supplier_name": supp_val},
+                {"supplier.name": supp_val}
+            ]
         query = build_purchase_mongo_query(base, data)
 
         offset = data.offset - 1 if data.offset > 0 else 0
@@ -326,7 +401,12 @@ class PurchaseReadDbRepo:
     ) -> Optional[dict]:
         query = {
             "shop_id": data.shop_id,
-            "$or": [{"purchase_id": data.id}, {"id": data.id}]
+            "$or": [
+                {"purchase_id": data.id},
+                {"id": data.id},
+                {"ui_id": data.id},
+                {"invoice_no": data.id}
+            ]
         }
 
         doc = await PURCHAESE_COLLECTION.find_one(

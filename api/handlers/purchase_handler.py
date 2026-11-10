@@ -407,12 +407,10 @@ class HandlePurchaseRequest:
     async def record_payment(self, data: RecordPurchasePaymentSchema):
         res = await self.purchase_service_obj.record_payment(data=data)
         if not res or not res.get("success"):
-            return ErrorResponseTypDict(
-                detail=BaseResponseTypDict(
-                    status_code=400,
-                    success=False,
-                    msg=res.get("msg", "Failed to record payment") if isinstance(res, dict) else "Failed to record payment"
-                )
+            err_msg = res.get("msg", "Failed to record payment") if isinstance(res, dict) else "Failed to record payment"
+            raise HTTPException(
+                status_code=400,
+                detail=err_msg
             )
         return SuccessResponseTypDict(
             detail=BaseResponseTypDict(
