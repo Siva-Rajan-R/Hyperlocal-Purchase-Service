@@ -100,12 +100,22 @@ class HandlePurchaseRequest:
                             if item.variant_id and inv_doc.get("variants"):
                                 for v in inv_doc.get("variants", []):
                                     if v.get("id") == item.variant_id:
-                                        vm = v.get("datas", {}).get("mrp") if isinstance(v.get("datas"), dict) else v.get("mrp")
+                                        vm = (
+                                            (v.get("datas") or {}).get("mrp") if isinstance(v.get("datas"), dict) else None
+                                        ) or (
+                                            (v.get("pricing_infos") or {}).get("mrp") if isinstance(v.get("pricing_infos"), dict) else None
+                                        ) or v.get("mrp")
                                         if vm and float(vm) > 0:
                                             item_mrp = float(vm)
                                         break
                             if item_mrp is None or item_mrp <= 0:
-                                pm = inv_doc.get("datas", {}).get("mrp") if isinstance(inv_doc.get("datas"), dict) else inv_doc.get("mrp")
+                                pm = (
+                                    (inv_doc.get("datas") or {}).get("mrp") if isinstance(inv_doc.get("datas"), dict) else None
+                                ) or (
+                                    (inv_doc.get("custom_fields") or {}).get("mrp") if isinstance(inv_doc.get("custom_fields"), dict) else None
+                                ) or (
+                                    (inv_doc.get("pricing_infos") or {}).get("mrp") if isinstance(inv_doc.get("pricing_infos"), dict) else None
+                                ) or inv_doc.get("mrp")
                                 if pm and float(pm) > 0:
                                     item_mrp = float(pm)
                     except Exception as e:
