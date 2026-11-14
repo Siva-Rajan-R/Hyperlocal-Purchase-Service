@@ -302,6 +302,13 @@ class PurchaseService:
         pur_rop_toadd = []
         read_items = []
 
+        calc_infos = data.calculation_infos
+        gst_mode = "EXCLUSIVE"
+        if calc_infos and getattr(calc_infos, 'gst_type', None):
+            gst_mode = str(calc_infos.gst_type).upper()
+        elif getattr(data, 'gst_infos', None) and getattr(data.gst_infos, 'type', None):
+            gst_mode = str(data.gst_infos.type).upper()
+
         total_pur_items = len(data.items)
         total_pur_cost = 0.0
         total_gst_amount = 0.0
@@ -317,10 +324,17 @@ class PurchaseService:
             sell_price = item.pricing_infos.sell_price
             gst_str = item.gst or "0%"
             gst_val = float(gst_str.replace("%", "").strip()) / 100.0 if "%" in gst_str else 0.0
-            gst_amt = qty * buy_price * gst_val
-            item_total = (qty * buy_price) + gst_amt
 
-            total_pur_cost += qty * buy_price
+            if gst_mode == "INCLUSIVE":
+                item_total = round(qty * (buy_price * (1.0 + gst_val)), 2)
+                item_taxable = round(item_total / (1.0 + gst_val), 2)
+                gst_amt = round(item_total - item_taxable, 2)
+            else:
+                item_taxable = round(qty * buy_price, 2)
+                gst_amt = round(item_taxable * gst_val, 2)
+                item_total = round(item_taxable + gst_amt, 2)
+
+            total_pur_cost += item_taxable
             total_gst_amount += gst_amt
 
             batch_id = None
@@ -439,6 +453,11 @@ class PurchaseService:
         elif u_email and not u_name:
             f_added_by = u_email
 
+        transport_ch = float(charges_dict.get("transport_charge", 0) or 0)
+        other_ch = float(charges_dict.get("other_charge", 0) or 0)
+        distribute_by = str(calc_dict.get("distribute_by", "NONE")).upper()
+        draft_total_cost = round(total_pur_cost + total_gst_amount + (transport_ch + other_ch if distribute_by == "NONE" else 0.0), 2)
+
         purchase_read_model = PurchaseReadModel(
             purchase_id=purchase_id,
             ui_id=ui_id,
@@ -448,6 +467,7 @@ class PurchaseService:
             purchase_date=datetime.datetime.combine(data.purchase_date, datetime.time.min),
             status="DRAFT",
             supplier=supplier_info,
+            total_cost=draft_total_cost,
             item_infos=item_infos_dict,
             payment_infos=payment_infos_dict,
             payment_status="DRAFT",
@@ -484,20 +504,36 @@ class PurchaseService:
         if getattr(data, 'status', None) == "DRAFT":
             return await self.save_draft(data)
 
-        # Validate paid amount against total purchase cost (QTY * (BUY PRICE + GST)) + charges
+        # Validate paid amount against total purchase cost
+        calc_infos = data.calculation_infos
+        gst_mode = "EXCLUSIVE"
+        if calc_infos and getattr(calc_infos, 'gst_type', None):
+            gst_mode = str(calc_infos.gst_type).upper()
+        elif getattr(data, 'gst_infos', None) and getattr(data.gst_infos, 'type', None):
+            gst_mode = str(data.gst_infos.type).upper()
+
         total_item_cost = 0.0
         for item in data.items:
             qty = item.stock_infos.stocks
             buy_price = item.pricing_infos.buy_price
             gst_str = item.gst or "0%"
             gst_val = float(gst_str.replace("%", "").strip()) / 100.0 if "%" in gst_str else 0.0
-            item_cost = qty * (buy_price + (buy_price * gst_val))
+            if gst_mode == "INCLUSIVE":
+                item_cost = round(qty * (buy_price * (1.0 + gst_val)), 2)
+            else:
+                item_cost = round(qty * (buy_price + (buy_price * gst_val)), 2)
             total_item_cost += item_cost
         
-        total_purchase_cost = total_item_cost
+        charges_dict = data.charges_infos.model_dump(mode="json") if data.charges_infos else {}
+        transport_ch = float(charges_dict.get("transport_charge", 0) or 0)
+        other_ch = float(charges_dict.get("other_charge", 0) or 0)
+        distribute_by = str(getattr(calc_infos, "distribute_by", "NONE")).upper() if calc_infos else "NONE"
+        total_charges = (transport_ch + other_ch) if distribute_by == "NONE" else 0.0
+
+        total_purchase_cost = round(total_item_cost + total_charges, 2)
         
         total_paid = sum(p.amount for p in data.payment_infos) if data.payment_infos else 0.0
-        if total_paid > total_purchase_cost:
+        if round(total_paid, 2) > round(total_purchase_cost, 2):
             ic("Paid amount exceeds total purchase cost, leading to negative outstanding balance.")
             return False
 
@@ -1056,9 +1092,6 @@ class PurchaseService:
             item_gst = t_gst or (db_item_local.gst if db_item_local else (prod_doc.get("gst") or "0%"))
             buy_price_val = item.pricing_infos.buy_price if item.pricing_infos else (prev_pricing.buy_price if prev_pricing else 0.0)
             
-            tot_pur_cost = buy_price_val * stock_toupdate
-            temp_total_pur_cost += tot_pur_cost
-            
             effective_gst_infos = getattr(data, "gst_infos", None) or prev_gst_infos
             gst_type = ""
             if effective_gst_infos:
@@ -1069,12 +1102,23 @@ class PurchaseService:
             if not gst_type:
                 gst_type = "EXCLUSIVE"
 
+            gst_rate = 0.0
             if item_gst and item_gst.endswith('%'):
                 try:
                     gst_rate = float(item_gst[:-1]) / 100.0
-                    temp_total_gst_amount += gst_rate * tot_pur_cost
                 except ValueError:
-                    pass
+                    gst_rate = 0.0
+
+            if str(gst_type).upper() == "INCLUSIVE":
+                line_total = round(stock_toupdate * (buy_price_val * (1.0 + gst_rate)), 2)
+                line_taxable = round(line_total / (1.0 + gst_rate), 2)
+                line_gst = round(line_total - line_taxable, 2)
+            else:
+                line_taxable = round(stock_toupdate * buy_price_val, 2)
+                line_gst = round(line_taxable * gst_rate, 2)
+
+            temp_total_pur_cost += line_taxable
+            temp_total_gst_amount += line_gst
 
         existing_read_doc = await PurchaseReadDbRepo.get_by_id(GetPurchaseByIdSchema(id=data.id, shop_id=data.shop_id))
         payment_infos = data.payment_infos if data.payment_infos is not None else (existing_read_doc.get("payment_infos") if existing_read_doc else [])
@@ -1775,9 +1819,6 @@ class PurchaseService:
                                 'create_stock_mov_adj': False
                             })
 
-            tot_pur_cost=buy_price_val * stock_toupdate
-            item_infos['total_pur_stocks']+=stock_toupdate
-            item_infos['total_pur_cost']+=tot_pur_cost
             effective_gst_infos = getattr(data, "gst_infos", None) or prev_gst_infos
             gst_type = ""
             if effective_gst_infos:
@@ -1788,13 +1829,25 @@ class PurchaseService:
             if not gst_type:
                 gst_type = "EXCLUSIVE"
 
-            if item_gst and item_gst.endswith('%') and gst_type == "EXCLUSIVE":
+            gst_rate = 0.0
+            if item_gst and item_gst.endswith('%'):
                 try:
                     gst_rate = float(item_gst[:-1]) / 100.0
-                    item_infos['total_gst_amount'] += gst_rate * (tot_pur_cost)
                 except ValueError:
-                    pass
-            item_infos['total_pur_items']+=1
+                    gst_rate = 0.0
+
+            if str(gst_type).upper() == "INCLUSIVE":
+                line_total = round(stock_toupdate * (buy_price_val * (1.0 + gst_rate)), 2)
+                line_taxable = round(line_total / (1.0 + gst_rate), 2)
+                line_gst = round(line_total - line_taxable, 2)
+            else:
+                line_taxable = round(stock_toupdate * buy_price_val, 2)
+                line_gst = round(line_taxable * gst_rate, 2)
+
+            item_infos['total_pur_stocks'] += stock_toupdate
+            item_infos['total_pur_cost'] += line_taxable
+            item_infos['total_gst_amount'] += line_gst
+            item_infos['total_pur_items'] += 1
 
         old_version = getattr(pur_get_res, "version", "v1") or "v1"
         def increment_version(version_str: str) -> str:
@@ -1875,6 +1928,16 @@ class PurchaseService:
                 for itm in existing_read_doc["items"]:
                     existing_items_map[itm["id"]] = itm
                     
+            effective_gst_infos = getattr(data, "gst_infos", None) or (existing_read_doc.get("gst_infos") if existing_read_doc else None)
+            gst_type = ""
+            if effective_gst_infos:
+                if isinstance(effective_gst_infos, dict):
+                    gst_type = effective_gst_infos.get('type') or ""
+                else:
+                    gst_type = getattr(effective_gst_infos, 'type', '') or ""
+            if not gst_type:
+                gst_type = "EXCLUSIVE"
+
             read_items = []
             total_pur_cost = 0.0
             total_pur_stocks = 0.0
@@ -1895,20 +1958,26 @@ class PurchaseService:
                 sell_price = db_item.pricing_infos[0].sell_price if db_item.pricing_infos else 0.0
                 stocks = db_item.stocks
                 
-                total_amount = buy_price * stocks
-                total_pur_cost += total_amount
-                total_pur_stocks += stocks
-                
                 gst = db_item.gst or "0%"
                 gst_rate = 0.0
                 if gst and gst.endswith('%'):
                     try:
                         gst_rate = float(gst[:-1]) / 100.0
                     except ValueError:
-                        pass
+                        gst_rate = 0.0
                 
-                if gst_rate > 0:
-                    total_gst_amount += gst_rate * total_amount
+                if str(gst_type).upper() == "INCLUSIVE":
+                    total_amount = round(stocks * (buy_price * (1.0 + gst_rate)), 2)
+                    item_taxable = round(total_amount / (1.0 + gst_rate), 2)
+                    gst_amt = round(total_amount - item_taxable, 2)
+                else:
+                    item_taxable = round(stocks * buy_price, 2)
+                    gst_amt = round(item_taxable * gst_rate, 2)
+                    total_amount = round(item_taxable + gst_amt, 2)
+
+                total_pur_cost += item_taxable
+                total_gst_amount += gst_amt
+                total_pur_stocks += stocks
                     
                 variant_infos_model = None
                 resolved_v_id = db_item.variant_id or (existing_item.get("variant_infos", {}).get("id") if existing_item.get("variant_infos") else None)

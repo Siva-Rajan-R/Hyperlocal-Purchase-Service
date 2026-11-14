@@ -416,16 +416,26 @@ class MessagingQueuePurchasegproducer:
                             item_pricing_payload = itm.get('pricing_infos') or {}
                             buy_price_val = float(item_pricing_payload.get('buy_price') if isinstance(item_pricing_payload, dict) and item_pricing_payload.get('buy_price') is not None else (itm.get('buy_price') if itm.get('buy_price') is not None else pricing_infos.get('buy_price', 0)))
                             sell_price_val = float(item_pricing_payload.get('sell_price') if isinstance(item_pricing_payload, dict) and item_pricing_payload.get('sell_price') is not None else (itm.get('sell_price') if itm.get('sell_price') is not None else pricing_infos.get('sell_price', 0)))
-                            item_infos['total_pur_cost'] += buy_price_val * stocks
                             
                             effective_gst_type = str((gst_infos.get('type') if isinstance(gst_infos, dict) else getattr(gst_infos, 'type', '')) or calculation_infos.get('gst_type') or "EXCLUSIVE").upper()
-                            if gst and gst.endswith('%') and effective_gst_type == "EXCLUSIVE":
+                            gst_rate = 0.0
+                            if gst and gst.endswith('%'):
                                 try:
                                     gst_rate = float(gst[:-1]) / 100.0
-                                    item_infos['total_gst_amount'] += gst_rate * (buy_price_val * stocks)
                                 except ValueError:
-                                    pass
-                            
+                                    gst_rate = 0.0
+
+                            if effective_gst_type == "INCLUSIVE":
+                                item_line_total = round(stocks * (buy_price_val * (1.0 + gst_rate)), 2)
+                                item_taxable = round(item_line_total / (1.0 + gst_rate), 2)
+                                item_gst_amt = round(item_line_total - item_taxable, 2)
+                            else:
+                                item_taxable = round(stocks * buy_price_val, 2)
+                                item_gst_amt = round(item_taxable * gst_rate, 2)
+                                item_line_total = round(item_taxable + item_gst_amt, 2)
+
+                            item_infos['total_pur_cost'] += item_taxable
+                            item_infos['total_gst_amount'] += item_gst_amt
                             item_infos['total_pur_stocks'] += stocks
 
                             pur_item_id = generate_uuid()  
@@ -491,7 +501,7 @@ class MessagingQueuePurchasegproducer:
                                     serial_numbers=resolve_serials_from_inventory(itm.get('serialno_numbers') or itm.get('serial_numbers') or [], serialno_infos),
                                     sell_price=float(pricing_infos.get('sell_price', 0)),
                                     buy_price=buy_price_val,
-                                    total_amount=buy_price_val * stocks,
+                                    total_amount=item_line_total,
                                     gst=gst
                                 )
                             )
@@ -580,7 +590,14 @@ class MessagingQueuePurchasegproducer:
                         ic(cust_obj)
 
                     total_amount_paid = sum(float(payment.get('amount', 0)) for payment in payment_infos)
-                    total_pur_cost = float(item_infos['total_pur_cost'] + item_infos['total_gst_amount'])
+                    charges_dict = charges_infos if isinstance(charges_infos, dict) else (charges_infos.model_dump(mode="json") if hasattr(charges_infos, 'model_dump') else {})
+                    transport_ch = float(charges_dict.get("transport_charge", 0) or 0)
+                    other_ch = float(charges_dict.get("other_charge", 0) or 0)
+                    calc_dict = calculation_infos if isinstance(calculation_infos, dict) else (calculation_infos.model_dump(mode="json") if hasattr(calculation_infos, 'model_dump') else {})
+                    distribute_by = str(calc_dict.get("distribute_by", "NONE")).upper()
+                    total_charges = (transport_ch + other_ch) if distribute_by == "NONE" else 0.0
+
+                    total_pur_cost = round(float(item_infos['total_pur_cost'] + item_infos['total_gst_amount']) + total_charges, 2)
                     outstanding_amount = max(0.0, round(total_pur_cost - total_amount_paid, 2))
 
                     if outstanding_amount == 0:

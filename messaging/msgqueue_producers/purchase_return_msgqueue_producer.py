@@ -104,7 +104,7 @@ class MessagingQueuePurchaseReturnProducer:
                                     })
 
                                 item_gst_amt = itm.get("gst_amount")
-                                if item_gst_amt is None:
+                                if item_gst_amt is None or (item_gst_amt == 0 and float(itm.get("quantity", 0)) > 0 and orig_buy_price > 0):
                                     try:
                                         gst_clean = float(str(orig_gst).replace('%', '').strip())
                                         item_gst_amt = round(float(itm.get("quantity", 0)) * orig_buy_price * (gst_clean / 100.0), 2)
@@ -139,6 +139,20 @@ class MessagingQueuePurchaseReturnProducer:
                                         })
                                         break
 
+                            tot_gst = return_toadd.get("total_gst_amount", 0.0)
+                            if not tot_gst or tot_gst == 0.0:
+                                tot_gst = round(sum(f.get("gst_amount", 0.0) for f in return_items_formatted), 2)
+
+                            ret_pay_infos = return_toadd.get("payment_infos", {}) or {}
+                            if isinstance(ret_pay_infos, dict):
+                                ret_pay_infos["total_gst_amount"] = tot_gst
+                                ret_pay_infos["gst_amount"] = tot_gst
+                                if "return_value" not in ret_pay_infos or ret_pay_infos.get("return_value") == 0:
+                                    ret_pay_infos["return_value"] = return_toadd.get("total_refund_amount", 0.0)
+                                if "cash_refund" not in ret_pay_infos or (ret_pay_infos.get("cash_refund") == 0 and return_toadd.get("total_refund_amount", 0.0) > 0):
+                                    adjusted = float(ret_pay_infos.get("adjusted_against_outstanding", 0.0) or 0.0)
+                                    ret_pay_infos["cash_refund"] = max(0.0, round(return_toadd.get("total_refund_amount", 0.0) - adjusted, 2))
+
                             new_return = {
                                 "id": return_toadd.get("id"),
                                 "ui_id": return_toadd.get("ui_id"),
@@ -146,8 +160,8 @@ class MessagingQueuePurchaseReturnProducer:
                                 "status": return_toadd.get("status", "COMPLETED"),
                                 "total_refund_amount": return_toadd.get("total_refund_amount", 0.0),
                                 "total_refund_qty": return_toadd.get("total_refund_qty", 0.0),
-                                "total_gst_amount": return_toadd.get("total_gst_amount", 0.0),
-                                "payment_infos": return_toadd.get("payment_infos", {}),
+                                "total_gst_amount": tot_gst,
+                                "payment_infos": ret_pay_infos,
                                 "created_at": return_toadd.get("created_at"),
                                 "updated_at": return_toadd.get("updated_at"),
                                 "items": return_items_formatted
@@ -217,8 +231,30 @@ class MessagingQueuePurchaseReturnProducer:
                                 invoice_no = existing_purchase.get("invoice_no") or existing_purchase.get("ui_id") or purchase_id
                                 supplier_id = existing_purchase.get("supplier_id") or (existing_purchase.get("supplier") or {}).get("supplier_id")
                                 if supplier_id:
-                                    # payment_infos could be a dict like {"mode": "CASH", "amount": 100} or {"CASH": {"amount": 100}}
-                                    pay_method = "ADJUSTED"
+                                    p_infos = return_toadd.get("payment_infos", {}) or {}
+                                    cash_refund = float(p_infos.get("cash_refund") or 0.0)
+                                    adjusted_amt = float(p_infos.get("adjusted_against_outstanding") or 0.0)
+                                    refund_method = (
+                                        p_infos.get("payment_method") or 
+                                        p_infos.get("method") or 
+                                        p_infos.get("mode") or 
+                                        p_infos.get("type") or 
+                                        ""
+                                    )
+                                    ret_ui_id = return_toadd.get("ui_id") or return_toadd.get("id") or ""
+                                    
+                                    if cash_refund > 0 and adjusted_amt > 0:
+                                        pay_method = f"{refund_method.upper()} REFUND / ADJUSTED" if refund_method else "RETURN REFUND / ADJUSTED"
+                                        notes_text = f"Purchase return refund for Invoice {invoice_no} ({ret_ui_id}). Cash refund: ₹{cash_refund:.2f}, Adjusted: ₹{adjusted_amt:.2f}"
+                                    elif cash_refund > 0:
+                                        pay_method = f"{refund_method.upper()} REFUND" if refund_method and refund_method.upper() != "ADJUSTED" else "CASH REFUND"
+                                        notes_text = f"Purchase return refund for Invoice {invoice_no} ({ret_ui_id}). Refund amount: ₹{cash_refund:.2f}"
+                                    else:
+                                        pay_method = "ADJUSTED"
+                                        notes_text = f"Purchase return adjusted against outstanding for Invoice {invoice_no} ({ret_ui_id}). Amount: ₹{adjusted_amt:.2f}"
+
+                                    if p_infos.get("reason"):
+                                        notes_text += f". Reason: {p_infos.get('reason')}"
 
                                     rounded_refund = round(float(total_refund), 2)
                                     rounded_outstanding = round(float(new_invoice_outstanding), 2)
@@ -227,28 +263,46 @@ class MessagingQueuePurchaseReturnProducer:
                                         "id": supplier_id,
                                         "outstanding_infos": {"amount": rounded_refund},
                                         "type": "DECREMENT",
-                                        "entity_name": "purchase_return",
+                                        "entity_name": "PURCHASE_RETURN",
                                         "entity_id": str(return_toadd.get("id") or purchase_id),
                                         "invoice_no": str(invoice_no or ""),
                                         "payment_method": pay_method,
                                         "cleared_amount": rounded_refund,
                                         "outstanding_amount": rounded_outstanding,
-                                        "notes": f"Purchase return for invoice {invoice_no}. Refund amount: {rounded_refund:.2f}",
+                                        "notes": notes_text,
                                         "from_purchase_service": True
                                     }
-                                    await rabbitmq_msg_obj.publish_event(
-                                        routing_key="suppliers.service.routing.key",
-                                        exchange_name="suppliers.service.exchange",
-                                        payload=supplier_payload,
-                                        headers={
-                                            **self.headers.copy(),
-                                            "body": supplier_payload,
-                                            "entity_name": "update_supllier_outstanding",
-                                            "service_name": "SUPPLIERS"
-                                        }
-                                    )
+
+                                    # 1. Sync via direct HTTP call to Supplier Service (fast & guaranteed synchronous DB update)
+                                    try:
+                                        import os, httpx
+                                        supplier_service_url = os.getenv("SUPPLIER_SERVICE_URL", "http://127.0.0.1:8002")
+                                        async with httpx.AsyncClient(timeout=5.0) as client:
+                                            http_res = await client.put(
+                                                f"{supplier_service_url}/suppliers/outstanding",
+                                                json=supplier_payload
+                                            )
+                                            ic(f"Supplier service HTTP sync result: {http_res.status_code}")
+                                    except Exception as http_err:
+                                        ic(f"HTTP call to supplier service failed: {http_err}")
+
+                                    # 2. Also publish to RabbitMQ for event-driven consumers
+                                    try:
+                                        await rabbitmq_msg_obj.publish_event(
+                                            routing_key="suppliers.service.routing.key",
+                                            exchange_name="suppliers.service.exchange",
+                                            payload=supplier_payload,
+                                            headers={
+                                                **self.headers.copy(),
+                                                "body": supplier_payload,
+                                                "entity_name": "update_supllier_outstanding",
+                                                "service_name": "SUPPLIERS"
+                                            }
+                                        )
+                                    except Exception as rmq_err:
+                                        ic(f"RabbitMQ publish to supplier service failed: {rmq_err}")
                         except Exception as e:
-                            ic(f"Failed to publish supplier ledger update: {e}")
+                            ic(f"Failed to process supplier ledger update: {e}")
 
 
                         try:

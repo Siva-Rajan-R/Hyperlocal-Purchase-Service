@@ -153,7 +153,7 @@ class ReturnService:
 
                 buy_price = float(target_item.get('buy_price', 0.0) or buy_price_from_pricing or target_item.get('rate', 0.0) or 0.0)
                 
-                # Check if purchase had EXCLUSIVE GST
+                # Calculate GST and total return amount for item
                 item_gst = target_item.get('gst') or target_item.get('gst_rate') or target_item.get('tax_gst') or "0%"
                 gst_infos_val = read_db_purchase.get("gst_infos") or {}
                 gst_type = str(
@@ -164,16 +164,22 @@ class ReturnService:
                 ).upper()
                 
                 gst_rate = 0.0
-                if item_gst and gst_type == "EXCLUSIVE":
+                if item_gst is not None:
                     try:
                         clean_gst = str(item_gst).replace('%', '').strip()
-                        gst_rate = float(clean_gst) / 100.0
+                        gst_rate = float(clean_gst) / 100.0 if clean_gst else 0.0
                     except (ValueError, TypeError):
-                        pass
+                        gst_rate = 0.0
 
                 unit_cost_with_gst = buy_price * (1.0 + gst_rate)
-                total_return_qty_amount = inc_quantity * unit_cost_with_gst
-                item_gst_amount = inc_quantity * (buy_price * gst_rate)
+                if gst_type == "INCLUSIVE":
+                    total_return_qty_amount = round(inc_quantity * unit_cost_with_gst, 2)
+                    taxable_amount = round(total_return_qty_amount / (1.0 + gst_rate), 2)
+                    item_gst_amount = round(total_return_qty_amount - taxable_amount, 2)
+                else:
+                    taxable_amount = round(inc_quantity * buy_price, 2)
+                    item_gst_amount = round(taxable_amount * gst_rate, 2)
+                    total_return_qty_amount = round(taxable_amount + item_gst_amount, 2)
 
                 founded_serialno = []
                 existing_serials = target_item.get('serial_numbers') or target_item.get('serialno_infos') or []
@@ -260,8 +266,11 @@ class ReturnService:
                 })
 
             if isinstance(payment_infos, dict):
-                payment_infos.setdefault("total_gst_amount", round(total_refund_gst_amount, 2))
-                payment_infos.setdefault("gst_amount", round(total_refund_gst_amount, 2))
+                payment_infos["total_gst_amount"] = round(total_refund_gst_amount, 2)
+                payment_infos["gst_amount"] = round(total_refund_gst_amount, 2)
+                payment_infos["return_value"] = round(total_refund_amount, 2)
+                adjusted = float(payment_infos.get("adjusted_against_outstanding", 0.0) or 0.0)
+                payment_infos["cash_refund"] = max(0.0, round(total_refund_amount - adjusted, 2))
 
             return_toadd = {
                 "id": return_id,
