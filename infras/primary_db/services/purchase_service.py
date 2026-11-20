@@ -2354,34 +2354,11 @@ class PurchaseService:
                         key = (itm["product_id"], itm.get("variant_infos", {}).get("id") if itm.get("variant_infos") else None, itm.get("batch_infos", {}).get("id") if itm.get("batch_infos") else None)
                         old_items_map[key] = itm
                         
-                analytics_datas = []
-                for i, item in enumerate(read_items):
-                    key = (item.product_id, item.variant_infos.id if item.variant_infos else None, item.batch_infos.id if item.batch_infos else None)
-                    old_item = old_items_map.get(key) or {}
-                    
-                    old_stocks = float(old_item.get("stocks_infos", {}).get("stocks", 0.0)) if old_item.get("stocks_infos") else 0.0
-                    old_amount = float(old_item.get("total_amount", 0.0))
-                    
-                    delta_stocks = float(item.stocks_infos.stocks) - old_stocks
-                    delta_amount = float(item.total_amount) - old_amount
-                    
-                    item_outstanding_delta = delta_outstanding if i == 0 else 0.0
-                    
-                    analytics_datas.append({
-                        "purchase_id": fresh_pur.id,
-                        "supplier_id": supplier_id,
-                        "product_id": item.product_id,
-                        "variant_id": item.variant_infos.id if item.variant_infos else None,
-                        "batch_id": item.batch_infos.id if item.batch_infos else None,
-                        "stocks": delta_stocks,
-                        "purchase_amounts": delta_amount,
-                        "outstanding_amounts": item_outstanding_delta
-                    })
-                    
                 analytics_payload = {
                     "shop_id": fresh_pur.shop_id,
-                    "total_purchase": 0,
-                    "datas": analytics_datas
+                    "entity_name": "PURCHASE",
+                    "entity_id": str(fresh_pur.id),
+                    "action": "UPDATE"
                 }
                 
                 await rabbitmq_msg_obj.publish_event(
@@ -2399,7 +2376,7 @@ class PurchaseService:
                     }
                 )
             except Exception as e:
-                ic(f"Failed to publish analytics delta event: {e}")
+                ic(f"Failed to publish analytics update event: {e}")
                 
         except Exception as e:
             ic(f"Failed to update MongoDB Read DB: {e}")
